@@ -1,0 +1,63 @@
+name: spark-llm
+services:
+  llm:
+    image: ${IMAGE:?Use bin/spark-llm prepare first}
+    platform: linux/arm64
+    pull_policy: never
+    command: ["--config", "/release/vllm.yaml"]
+    network_mode: host
+    ipc: host
+    restart: "no"
+    stop_grace_period: ${STOP_GRACE_SECONDS:?}s
+    environment:
+      HF_HUB_CACHE: /hf-cache
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      HF_HUB_DISABLE_IMPLICIT_TOKEN: "1"
+      VLLM_CACHE_ROOT: /runtime-cache/vllm
+      XDG_CACHE_HOME: /runtime-cache
+      VLLM_API_KEY: ${VLLM_API_KEY:-}
+      SPARK_HEALTH_HOST: ${HEALTH_HOST:?}
+      SPARK_HEALTH_PORT: ${PORT:?}
+      SPARK_HEALTH_TIMEOUT: ${HEALTH_TIMEOUT:?}
+    volumes:
+      - type: bind
+        source: ${HF_CACHE:?}
+        target: /hf-cache
+        read_only: true
+      - type: bind
+        source: ${RELEASE_DIR:?}
+        target: /release
+        read_only: true
+      - type: bind
+        source: ${RUNTIME_CACHE_DIR:?}
+        target: /runtime-cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - >-
+          import os, urllib.request;
+          h=os.environ['SPARK_HEALTH_HOST'];
+          h='['+h+']' if ':' in h else h;
+          u='http://'+h+':'+os.environ['SPARK_HEALTH_PORT']+'/health';
+          r=urllib.request.Request(u,headers={'Authorization':'Bearer '+os.environ.get('VLLM_API_KEY','')});
+          urllib.request.urlopen(r,timeout=float(os.environ['SPARK_HEALTH_TIMEOUT'])).close()
+      interval: 15s
+      timeout: ${HEALTH_TIMEOUT:?}s
+      retries: 4
+      start_period: ${STARTUP_TIMEOUT:?}s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"

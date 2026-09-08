@@ -1,0 +1,7 @@
+host.env
+secrets.env
+state/
+reports/
+__pycache__/
+*.pyc
+.venv/

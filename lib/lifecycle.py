@@ -21,19 +21,17 @@ try:
 except ImportError:
     sys.exit('Python PyYAML is required on the host (python3-yaml).')
 
+import profiles
+import runtime_sglang
+import runtime_vllm
+
 ROOT = Path(__file__).resolve().parents[1]
 STATE = ROOT / 'state'
-PROFILE = ROOT / 'profiles/qwen38-27b-nvfp4'
 HOST_KEYS = {'HF_CACHE', 'RUNTIME_CACHE', 'BIND_HOST', 'PORT', 'STARTUP_TIMEOUT',
              'REQUEST_TIMEOUT', 'HEALTH_TIMEOUT', 'SHUTDOWN_TIMEOUT', 'STOP_GRACE_SECONDS',
              'DISK_RESERVE_GIB', 'PREPARE_OVERHEAD_GIB', 'MIN_AVAILABLE_GIB'}
-MODEL_KEYS = {'model', 'revision', 'tokenizer-revision', 'served-model-name',
-              'tensor-parallel-size', 'max-model-len', 'max-num-seqs', 'gpu-memory-utilization',
-              'max-num-batched-tokens', 'enable-chunked-prefill', 'enable-prefix-caching',
-              'dtype', 'kv-cache-dtype', 'language-model-only', 'reasoning-parser',
-              'tool-call-parser', 'enable-auto-tool-choice', 'default-chat-template-kwargs',
-              'generation-config', 'override-generation-config', 'enable-log-requests',
-              'enable-log-outputs', 'disable-uvicorn-access-log'}
+MEMORY_GUARD_GRACE_SECONDS = 15
+ADAPTERS = {'vllm': runtime_vllm, 'sglang': runtime_sglang}
 
 
 def fail(message):
@@ -93,24 +91,10 @@ def env_file(path, allowed, required=True):
     return values
 
 
-class UniqueLoader(yaml.SafeLoader):
-    pass
+UniqueLoader = profiles.UniqueLoader
 
 
-def mapping(loader, node, deep=False):
-    result = {}
-    for key_node, value_node in node.value:
-        key = loader.construct_object(key_node, deep=deep)
-        if key in result:
-            fail(f'Duplicate YAML setting: {key}')
-        result[key] = loader.construct_object(value_node, deep=deep)
-    return result
-
-
-UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
-
-
-def config():
+def host_config(require_secrets=True):
     host = env_file(ROOT / 'host.env', HOST_KEYS)
     if set(host) != HOST_KEYS:
         fail('host.env must contain all documented host keys')
@@ -132,46 +116,29 @@ def config():
         fail('BIND_HOST must be an explicit IP address')
     if not address.is_loopback and (not address.is_private or address.is_unspecified):
         fail('Bind to loopback or a specific private interface address')
-    secrets = env_file(ROOT / 'secrets.env', {'HF_TOKEN', 'VLLM_API_KEY'}, False)
+    secrets = env_file(ROOT / 'secrets.env', {'HF_TOKEN', 'VLLM_API_KEY'}, False) if require_secrets else {}
     if (ROOT / 'secrets.env').exists() and (ROOT / 'secrets.env').stat().st_mode & 0o077:
         fail('Run chmod 600 secrets.env before using credentials')
     if not address.is_loopback and not secrets.get('VLLM_API_KEY'):
         fail('A private-network bind requires VLLM_API_KEY in secrets.env')
-    raw = (PROFILE / 'vllm.yaml').read_text()
-    if '$' in raw:
-        fail('Unresolved variable in model profile')
-    model = yaml.load(raw, Loader=UniqueLoader)
-    if not isinstance(model, dict) or set(model) != MODEL_KEYS:
-        fail('Model profile has missing or unknown settings; host keys belong in host.env')
-    if not re.fullmatch(r'[0-9a-f]{40}', str(model['revision'])):
-        fail('Model revision must be a full 40-character commit')
-    if model['tokenizer-revision'] != model['revision']:
-        fail('Tokenizer and checkpoint revisions must match')
-    for key in ('tensor-parallel-size', 'max-model-len', 'max-num-seqs', 'max-num-batched-tokens'):
-        if type(model[key]) is not int or model[key] <= 0:
-            fail(f'{key} must be a positive integer')
-    for key in ('enable-chunked-prefill', 'enable-prefix-caching', 'language-model-only',
-                'enable-auto-tool-choice', 'enable-log-requests', 'enable-log-outputs', 'disable-uvicorn-access-log'):
-        if type(model[key]) is not bool:
-            fail(f'{key} must be a YAML boolean')
-    if type(model['gpu-memory-utilization']) not in (float, int):
-        fail('gpu-memory-utilization must be numeric')
-    if not isinstance(model['override-generation-config'], dict):
-        fail('override-generation-config must be a mapping')
-    if model['max-model-len'] != 262144 or model['max-num-seqs'] != 1:
-        fail('This profile requires 262144 context and one scheduled sequence')
-    if model['tensor-parallel-size'] != 1 or not 0 < model['gpu-memory-utilization'] < 1:
-        fail('Invalid GPU allocation or tensor parallelism')
-    if model['enable-log-requests'] or model['enable-log-outputs']:
-        fail('Prompt and output logging must remain disabled')
-    if not model['language-model-only']:
-        fail('This profile must remain text-only')
-    if 'max_new_tokens' in model['override-generation-config']:
-        fail('Do not set a global completion cap through max_new_tokens')
-    image = env_file(PROFILE / 'image.env', {'IMAGE'})
+    return host, secrets
+
+
+def secrets_config():
+    secrets = env_file(ROOT / 'secrets.env', {'HF_TOKEN', 'VLLM_API_KEY'}, False)
+    if (ROOT / 'secrets.env').exists() and (ROOT / 'secrets.env').stat().st_mode & 0o077:
+        fail('Run chmod 600 secrets.env before using credentials')
+    return secrets
+
+
+def config(profile_id=profiles.DEFAULT_PROFILE):
+    host, secrets = host_config()
+    profile = profiles.load(ROOT, profile_id)
+    ADAPTERS[profile['engine']].validate(profile['native'], profile['metadata'])
+    image = env_file(profile['image_path'], {'IMAGE'})
     if set(image) != {'IMAGE'} or not re.fullmatch(r'[a-zA-Z0-9._/@:-]+', image['IMAGE']):
         fail('image.env needs one literal IMAGE reference')
-    return host, secrets, model, image['IMAGE']
+    return host, secrets, profile, image['IMAGE']
 
 
 def containers():
@@ -206,6 +173,7 @@ def require_idle(host):
         fail('Host available memory is below the configured guardrail')
     family = socket.AF_INET6 if ':' in host['BIND_HOST'] else socket.AF_INET
     with socket.socket(family) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind((host['BIND_HOST'], host['PORT']))
         except OSError:
@@ -263,16 +231,56 @@ def compose(release_id, secrets, *args, capture=True):
                 '-f', path / 'compose.yaml', *args], env=environment, capture=capture)
 
 
-def prepare(host, secrets, model, image):
-    environment_report = doctor(host)
+def render_compose(runtime, metadata):
+    service = {
+        'image': '${IMAGE:?Use bin/spark-llm prepare first}', 'platform': 'linux/arm64',
+        'pull_policy': 'never', 'command': runtime['command'], 'network_mode': 'host',
+        'ipc': 'host', 'restart': 'no', 'stop_grace_period': '${STOP_GRACE_SECONDS:?}s',
+        'environment': {
+            'HF_HUB_CACHE': '/hf-cache', 'HF_HUB_OFFLINE': '1', 'TRANSFORMERS_OFFLINE': '1',
+            'HF_HUB_DISABLE_TELEMETRY': '1', 'HF_HUB_DISABLE_IMPLICIT_TOKEN': '1',
+            'XDG_CACHE_HOME': '/runtime-cache', 'SPARK_HEALTH_HOST': '${HEALTH_HOST:?}',
+            'SPARK_HEALTH_PORT': '${PORT:?}', 'SPARK_HEALTH_TIMEOUT': '${HEALTH_TIMEOUT:?}',
+            **{k: str(v) for k, v in metadata['runtime-environment'].items()},
+            **runtime['environment'],
+        },
+        'volumes': [
+            {'type': 'bind', 'source': '${HF_CACHE:?}', 'target': '/hf-cache', 'read_only': True},
+            {'type': 'bind', 'source': '${RELEASE_DIR:?}', 'target': '/release', 'read_only': True},
+            {'type': 'bind', 'source': '${RUNTIME_CACHE_DIR:?}', 'target': '/runtime-cache'},
+        ],
+        'deploy': {'resources': {'reservations': {'devices': [
+            {'driver': 'nvidia', 'count': 1, 'capabilities': ['gpu']} ]}}},
+        'healthcheck': {
+            'test': ['CMD', 'python3', '-c',
+                     "import os,urllib.request;h=os.environ['SPARK_HEALTH_HOST'];"
+                     "h='['+h+']' if ':' in h else h;u='http://'+h+':'+os.environ['SPARK_HEALTH_PORT']+'/health';"
+                     "r=urllib.request.Request(u,headers={'Authorization':'Bearer '+os.environ.get('VLLM_API_KEY','')});"
+                     "urllib.request.urlopen(r,timeout=float(os.environ['SPARK_HEALTH_TIMEOUT'])).close()"],
+            'interval': '15s', 'timeout': '${HEALTH_TIMEOUT:?}s', 'retries': 4,
+            'start_period': '${STARTUP_TIMEOUT:?}s'},
+        'logging': {'driver': 'json-file', 'options': {'max-size': '20m', 'max-file': '3'}},
+    }
+    if runtime['entrypoint']:
+        service['entrypoint'] = runtime['entrypoint']
+    if metadata['derived-cache']:
+        service['volumes'].append({'type': 'bind', 'source': '${PLE_CACHE_DIR:?}',
+                                   'target': metadata['derived-cache']['mount']})
+    return yaml.safe_dump({'name': 'spark-llm', 'services': {'llm': service}}, sort_keys=False)
+
+
+def check_disk_capacity(host, metadata):
     for target in (Path(host['HF_CACHE']), Path(host['RUNTIME_CACHE']), ROOT):
         parent = target
         while not parent.exists():
             parent = parent.parent
-        # Full snapshot plus conservative image/extraction/cache allowance.
-        reserve = (host['DISK_RESERVE_GIB'] + host['PREPARE_OVERHEAD_GIB'] + 30) * 2**30
+        extra = metadata['derived-cache']['minimum-free-gib'] if metadata['derived-cache'] else 30
+        reserve = (host['DISK_RESERVE_GIB'] + host['PREPARE_OVERHEAD_GIB'] + extra) * 2**30
         if shutil.disk_usage(parent).free < reserve:
             fail(f'Insufficient disk reserve at {parent}')
+
+
+def pull_image(image):
     print('Pulling candidate image...', flush=True)
     run(['docker', 'pull', '--platform', 'linux/arm64', image], capture=False)
     inspect = json.loads(run(['docker', 'image', 'inspect', image]))[0]
@@ -281,64 +289,133 @@ def prepare(host, secrets, model, image):
     digests = inspect.get('RepoDigests') or []
     if not digests:
         fail('Image has no immutable repository digest')
-    pinned = digests[0]
-    entrypoint = inspect['Config'].get('Entrypoint')
-    if entrypoint != ['vllm', 'serve']:
-        fail(f'Unsupported image entrypoint {entrypoint}; inspect and adapt the common command explicitly')
-    cuda_code = ('import torch,vllm,json; x=torch.ones((32,32),device="cuda"); '
-                 'y=x@x; torch.cuda.synchronize(); assert y[0,0].item()==32; '
-                 'print(json.dumps({"torch":torch.__version__,"vllm":vllm.__version__, '
-                 '"cuda":torch.version.cuda,"gpu":torch.cuda.get_device_name(), '
-                 '"capability":torch.cuda.get_device_capability()}))')
-    print('Validating a real CUDA operation in the pinned image...', flush=True)
-    runtime = run(['docker', 'run', '--rm', '--gpus', 'all', '--entrypoint', 'python3', pinned, '-c', cuda_code])
-    try:
-        runtime = json.loads(runtime.splitlines()[-1])
-    except (ValueError, IndexError):
-        fail('CUDA probe did not produce valid runtime metadata')
-    help_text = run(['docker', 'run', '--rm', '--gpus', 'all', pinned, '--help=all'])
-    for key in model.keys() | {'host', 'port', 'shutdown-timeout'}:
-        if '--' + key not in help_text:
-            fail(f'Candidate runtime does not support --{key}')
-    for parser in ('qwen3', 'qwen3_coder'):
-        if parser not in help_text:
-            fail(f'Candidate runtime does not list parser {parser}')
-    print('Downloading and hashing the complete pinned snapshot...', flush=True)
+    return digests[0], inspect['Config'].get('Entrypoint')
+
+
+def download_artifacts(host, secrets, profile, pinned):
+    adapter = ADAPTERS[profile['engine']]
+    repository, revision = adapter.repository(profile['native'])
+    print(f'Downloading and hashing {repository}@{revision}...', flush=True)
     env = os.environ.copy()
     env['HF_TOKEN'] = secrets.get('HF_TOKEN', '')
     downloaded = run(['docker', 'run', '--rm', '--network', 'host', '--entrypoint', 'python3',
                       '--mount', f'type=bind,src={host["HF_CACHE"]},dst=/hf-cache',
                       '--mount', f'type=bind,src={ROOT / "lib/prepare_model.py"},dst=/prepare.py,readonly',
                       '-e', 'HF_TOKEN', '-e', 'HTTP_PROXY', '-e', 'HTTPS_PROXY', '-e', 'NO_PROXY',
-                      pinned, '/prepare.py', model['model'], model['revision']], env=env)
+                      pinned, '/prepare.py', repository, revision], env=env)
     marker = next((s.removeprefix('SPARK_MANIFEST=') for s in downloaded.splitlines()
                    if s.startswith('SPARK_MANIFEST=')), None)
     if marker is None:
         fail('Artifact verification did not return a manifest')
-    artifacts = json.loads(marker)
-    resolved = dict(model)
-    resolved.update({'model': artifacts['snapshot'], 'tokenizer': artifacts['snapshot'],
-                     'host': host['BIND_HOST'], 'port': host['PORT'],
-                     'shutdown-timeout': host['SHUTDOWN_TIMEOUT']})
-    config_text = yaml.safe_dump(resolved, sort_keys=False)
-    identity = {'image': pinned, 'repository': model['model'], 'revision': model['revision'],
-                'config': resolved, 'host': host, 'compose_sha256': hashlib.sha256((ROOT / 'compose.yaml').read_bytes()).hexdigest()}
+    return json.loads(marker)
+
+
+def downloaded_artifacts(host, profile):
+    metadata = profile['metadata']
+    record = read_json(STATE / 'downloaded' / f'{metadata["id"]}.json')
+    if not record:
+        return None
+    payload = record.get('payload')
+    if not isinstance(payload, dict) or record.get('sha256') != digest_object(payload):
+        fail('Downloaded-model record is malformed or was modified')
+    repository, revision = ADAPTERS[profile['engine']].repository(profile['native'])
+    if payload.get('profile') != metadata['id'] or payload.get('repository') != repository or \
+            payload.get('revision') != revision:
+        return None
+    artifacts = payload.get('artifacts')
+    try:
+        relative = Path(artifacts['snapshot']).relative_to('/hf-cache')
+        snapshot = Path(host['HF_CACHE']) / relative
+        entries = artifacts['files']
+    except (KeyError, TypeError, ValueError):
+        fail('Downloaded-model manifest is invalid')
+    for entry in entries:
+        item = snapshot / entry['path']
+        if not item.is_file() or item.stat().st_size != entry['size']:
+            return None
+    return artifacts
+
+
+def download(host, secrets, profile, image):
+    metadata = profile['metadata']
+    check_disk_capacity(host, metadata)
+    pinned, _ = pull_image(image)
+    artifacts = download_artifacts(host, secrets, profile, pinned)
+    repository, revision = ADAPTERS[profile['engine']].repository(profile['native'])
+    payload = {'profile': metadata['id'], 'repository': repository, 'revision': revision,
+               'artifacts': artifacts, 'downloaded_at': time.time(), 'downloader_image': pinned}
+    atomic(STATE / 'downloaded' / f'{metadata["id"]}.json',
+           {'payload': payload, 'sha256': digest_object(payload)})
+    total = sum(entry['size'] for entry in artifacts['files'])
+    print(f'Downloaded {metadata["id"]}: {total / 2**30:.1f} GiB verified at {artifacts["snapshot"]}.')
+    return artifacts
+
+
+def prepare(host, secrets, profile, image):
+    metadata, model = profile['metadata'], profile['native']
+    adapter = ADAPTERS[profile['engine']]
+    adapter.validate(model, metadata)
+    environment_report = doctor(host)
+    check_disk_capacity(host, metadata)
+    pinned, entrypoint = pull_image(image)
+    adapter.inspect_entrypoint(entrypoint)
+    cuda_code = adapter.cuda_probe()
+    print('Validating a real CUDA operation in the pinned image...', flush=True)
+    runtime = run(['docker', 'run', '--rm', '--gpus', 'all', '--entrypoint', 'python3', pinned, '-c', cuda_code])
+    try:
+        runtime = json.loads(runtime.splitlines()[-1])
+    except (ValueError, IndexError):
+        fail('CUDA probe did not produce valid runtime metadata')
+    help_text = run(adapter.probe_command(pinned))
+    adapter.validate_help(help_text, model, metadata)
+    artifacts = downloaded_artifacts(host, profile)
+    if artifacts:
+        print(f'Using verified pre-downloaded snapshot for {metadata["id"]}.', flush=True)
+    else:
+        artifacts = download_artifacts(host, secrets, profile, pinned)
+    runtime_render = adapter.render(model, artifacts['snapshot'], host,
+                                    authenticated=bool(secrets.get('VLLM_API_KEY')))
+    config_text = runtime_render['config_text']
+    compose_text = render_compose(runtime_render, metadata)
+    repository, revision = adapter.repository(model)
+    policy = dict(metadata)
+    identity = {'schema_version': 2, 'engine': profile['engine'], 'profile': metadata['id'],
+                'image': pinned, 'repository': repository, 'revision': revision,
+                'config': runtime_render['resolved'], 'profile_policy': policy,
+                'policy_sha256': digest_object(policy), 'host': host,
+                'invocation': {'entrypoint': runtime_render['entrypoint'], 'command': runtime_render['command']},
+                'compose_sha256': hashlib.sha256(compose_text.encode()).hexdigest()}
     release_id = digest_object(identity)[:24]
     path = STATE / 'releases' / release_id
-    cache_path = Path(host['RUNTIME_CACHE']) / digest_object({'image': pinned, 'config': resolved})[:24]
+    cache_path = Path(host['RUNTIME_CACHE']) / profile['engine'] / digest_object(
+        {'image': pinned, 'config': runtime_render['resolved']})[:24]
     cache_path.mkdir(parents=True, exist_ok=True)
+    compose_env = {'IMAGE': pinned, 'HF_CACHE': host['HF_CACHE'],
+                   'RUNTIME_CACHE_DIR': str(cache_path), 'HEALTH_HOST': host['BIND_HOST'],
+                   **{k: host[k] for k in ('PORT', 'HEALTH_TIMEOUT', 'STARTUP_TIMEOUT', 'STOP_GRACE_SECONDS')}}
+    if metadata['derived-cache']:
+        ple_path = Path(host['RUNTIME_CACHE']) / 'ple' / release_id
+        ple_path.mkdir(parents=True, exist_ok=True)
+        owner = ple_path / '.owner.json'
+        if owner.exists() and read_json(owner) != {'release': release_id, 'kind': 'ple'}:
+            fail('Derived-cache ownership marker does not match the release')
+        if not owner.exists():
+            if any(ple_path.iterdir()):
+                fail('Refusing to claim a non-empty derived-cache directory')
+            atomic(owner, {'release': release_id, 'kind': 'ple'})
+        compose_env['PLE_CACHE_DIR'] = str(ple_path)
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         temp = Path(tempfile.mkdtemp(dir=path.parent, prefix='.prepare-'))
-        (temp / 'vllm.yaml').write_text(config_text)
-        shutil.copyfile(ROOT / 'compose.yaml', temp / 'compose.yaml')
+        config_name = runtime_render['config_name']
+        (temp / config_name).write_text(config_text)
+        (temp / 'compose.yaml').write_text(compose_text)
         rec = {'id': release_id, 'prepared_at': time.time(), 'identity': identity,
                'image_candidate': image, 'entrypoint': entrypoint, 'runtime': runtime,
                'artifacts': artifacts, 'environment': environment_report,
-               'hashes': {n: hashlib.sha256((temp / n).read_bytes()).hexdigest() for n in ('vllm.yaml', 'compose.yaml')},
-               'compose_env': {'IMAGE': pinned, 'HF_CACHE': host['HF_CACHE'],
-                               'RUNTIME_CACHE_DIR': str(cache_path), 'HEALTH_HOST': host['BIND_HOST'],
-                               **{k: host[k] for k in ('PORT', 'HEALTH_TIMEOUT', 'STARTUP_TIMEOUT', 'STOP_GRACE_SECONDS')}}}
+               'hashes': {n: hashlib.sha256((temp / n).read_bytes()).hexdigest()
+                          for n in (config_name, 'compose.yaml')},
+               'compose_env': compose_env}
         atomic(temp / 'release.json', rec)
         os.rename(temp, path)
         for item in path.iterdir():
@@ -346,8 +423,11 @@ def prepare(host, secrets, model, image):
         path.chmod(0o555)
     release(release_id)
     compose(release_id, secrets, 'config', '--quiet')
-    atomic(STATE / 'prepared.json', {'release': release_id})
-    print(f'Prepared {release_id}; CUDA passed. Model execution and 256K qualification are pending.')
+    atomic(STATE / 'prepared' / f'{metadata["id"]}.json', {'profile': metadata['id'], 'release': release_id})
+    if metadata['id'] == profiles.DEFAULT_PROFILE:
+        atomic(STATE / 'prepared.json', {'release': release_id})
+    print(f'Prepared {release_id} for {metadata["id"]}; CUDA passed. '
+          f'Model execution and {metadata["context-tokens"]}-token qualification are pending.')
     return release_id
 
 
@@ -363,6 +443,14 @@ def test_release(release_id, secrets, mode):
                env=env, capture=False)
 
 
+def sustained_low_memory(low_since, available, minimum, now):
+    if available >= minimum:
+        return None, False
+    if low_since is None:
+        low_since = now
+    return low_since, now - low_since >= MEMORY_GUARD_GRACE_SECONDS
+
+
 def wait_ready(release_id, secrets):
     _, rec = release(release_id)
     host = rec['identity']['host']
@@ -372,11 +460,16 @@ def wait_ready(release_id, secrets):
     deadline = time.monotonic() + host['STARTUP_TIMEOUT']
     next_notice = 0
     minimum_memory = memory_available()
+    low_memory_since = None
+    memory_floor = host['MIN_AVAILABLE_GIB'] * 2**30
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     while time.monotonic() < deadline:
-        minimum_memory = min(minimum_memory, memory_available())
-        if minimum_memory < host['MIN_AVAILABLE_GIB'] * 2**30:
-            fail('Startup crossed the host available-memory guardrail')
+        now = time.monotonic()
+        available = memory_available()
+        minimum_memory = min(minimum_memory, available)
+        low_memory_since, failed = sustained_low_memory(low_memory_since, available, memory_floor, now)
+        if failed:
+            fail('Startup remained below the host available-memory guardrail for 15 seconds')
         rows = containers()
         if len(rows) != 1 or not rows[0]['State']['Running']:
             fail('Candidate exited during startup; inspect bin/spark-llm logs')
@@ -397,6 +490,38 @@ def wait_ready(release_id, secrets):
     fail('Startup timeout; configuration remains unqualified')
 
 
+
+def swap_pages():
+    values = {}
+    for line in Path('/proc/vmstat').read_text().splitlines():
+        key, value = line.split()
+        if key in ('pswpin', 'pswpout'):
+            values[key] = int(value)
+    return values['pswpin'], values['pswpout']
+
+
+def wait_for_swap_quiet(rec, quiet_seconds=10, timeout_seconds=60):
+    deadline = time.monotonic() + timeout_seconds
+    last = swap_pages()
+    quiet_since = time.monotonic()
+    low_memory_since = None
+    memory_floor = rec['identity']['host']['MIN_AVAILABLE_GIB'] * 2**30
+    while time.monotonic() < deadline:
+        time.sleep(1)
+        now = time.monotonic()
+        current = swap_pages()
+        if current != last:
+            last = current
+            quiet_since = now
+        elif now - quiet_since >= quiet_seconds:
+            return
+        low_memory_since, failed = sustained_low_memory(
+            low_memory_since, memory_available(), memory_floor, now)
+        if failed:
+            fail('Post-startup settling remained below the host available-memory guardrail')
+    fail('Swap activity did not settle within 60 seconds after startup')
+
+
 def stop(release_id, secrets):
     if release_id:
         compose(release_id, secrets, 'stop', capture=False)
@@ -412,7 +537,11 @@ def stop(release_id, secrets):
 
 def launch(release_id, secrets):
     _, rec = release(release_id)
+    address = ipaddress.ip_address(rec['identity']['host']['BIND_HOST'])
+    if not address.is_loopback and not secrets.get('VLLM_API_KEY'):
+        fail('A private-network bind requires VLLM_API_KEY in secrets.env')
     require_idle(rec['identity']['host'])
+    reset_derived_cache(rec)
     # Offline Docker verification: never pull during start.
     run(['docker', 'image', 'inspect', rec['identity']['image']])
     snapshot = Path(rec['identity']['host']['HF_CACHE']) / Path(rec['artifacts']['snapshot']).relative_to('/hf-cache')
@@ -422,6 +551,7 @@ def launch(release_id, secrets):
             fail(f'Prepared artifact missing/incomplete: {entry["path"]}; rerun prepare')
     compose(release_id, secrets, 'up', '-d', '--force-recreate', '--pull', 'never', capture=False)
     wait_ready(release_id, secrets)
+    wait_for_swap_quiet(rec)
     test_release(release_id, secrets, 'smoke')
     backend_lines = []
     for row in containers():
@@ -437,6 +567,30 @@ def launch(release_id, secrets):
         'nvfp4_generation_smoke': 'passed', 'capacity_qualification': 'separate'})
 
 
+def reset_derived_cache(rec):
+    policy = rec['identity'].get('profile_policy', {}).get('derived-cache')
+    if not policy or not policy.get('reset-before-start'):
+        return
+    if any(row['State']['Running'] for row in containers()):
+        fail('Refusing to reset derived cache while the service is running')
+    root = (Path(rec['identity']['host']['RUNTIME_CACHE']) / 'ple').resolve()
+    path = Path(rec['compose_env']['PLE_CACHE_DIR'])
+    if path.is_symlink() or path.resolve().parent != root:
+        fail('Derived-cache path is outside the owned PLE root')
+    owner = path / '.owner.json'
+    if read_json(owner) != {'release': rec['id'], 'kind': 'ple'}:
+        fail('Derived-cache ownership marker is missing or invalid')
+    for item in path.iterdir():
+        if item == owner:
+            continue
+        if item.is_symlink():
+            fail('Refusing to follow a symlink in the derived cache')
+        if item.is_dir():
+            shutil.rmtree(item)
+        else:
+            item.unlink()
+
+
 def replace(release_id, secrets):
     old = state()
     if old['active'] == release_id and old['running']:
@@ -445,24 +599,31 @@ def replace(release_id, secrets):
         print('Requested release is already running.')
         return
     # Validate candidate fully before stopping the active service.
-    release(release_id)
+    _, candidate_record = release(release_id)
+    address = ipaddress.ip_address(candidate_record['identity']['host']['BIND_HOST'])
+    if not address.is_loopback and not secrets.get('VLLM_API_KEY'):
+        fail('A private-network bind requires VLLM_API_KEY in secrets.env')
     compose(release_id, secrets, 'config', '--quiet')
     busy = conflicts()
     if busy:
         fail('Conflicting GPU containers: ' + ', '.join(busy))
     stop(old['active'], secrets)
     atomic(STATE / 'active.json', old | {'running': False})
+    fallback = old['accepted'] or (old['active'] if old['running'] else None)
+    if fallback == release_id:
+        fallback = None
     try:
         launch(release_id, secrets)
     except Exception as error:
         atomic(ROOT / 'reports/last-failure.json', {'time': time.time(), 'candidate': release_id,
-               'error': str(error), 'rollback_target': old['accepted']})
+               'error': str(error), 'rollback_target': fallback})
         stop(release_id, secrets)
-        if old['accepted'] and old['accepted'] != release_id:
-            launch(old['accepted'], secrets)
-            for c in containers():
-                run(['docker', 'update', '--restart', 'unless-stopped', c['Id']])
-            atomic(STATE / 'active.json', old | {'active': old['accepted'], 'running': True})
+        if fallback:
+            launch(fallback, secrets)
+            if fallback == old['accepted']:
+                for c in containers():
+                    run(['docker', 'update', '--restart', 'unless-stopped', c['Id']])
+            atomic(STATE / 'active.json', old | {'active': fallback, 'running': True})
         raise
     atomic(STATE / 'active.json', old | {'active': release_id, 'running': True})
     qualified = read_json(STATE / 'qualification' / f'{release_id}.json', {})
@@ -481,11 +642,18 @@ def status():
     result = dict(current)
     if current['active']:
         _, rec = release(current['active'])
-        cfg = rec['identity']['config']
+        identity = rec['identity']
+        cfg = identity['config']
+        engine = identity.get('engine', 'vllm')
+        profile_id = identity.get('profile', profiles.DEFAULT_PROFILE)
+        policy = identity.get('profile_policy', {})
+        context_tokens = cfg['context-length'] if engine == 'sglang' else cfg['max-model-len']
+        max_sequences = cfg['max-running-requests'] if engine == 'sglang' else cfg['max-num-seqs']
         result.update({'repository': rec['identity']['repository'], 'revision': rec['identity']['revision'],
                        'image_digest': rec['identity']['image'], 'configuration_hash': digest_object(cfg),
-                       'alias': cfg['served-model-name'], 'max_model_len': cfg['max-model-len'],
-                       'max_num_seqs': cfg['max-num-seqs'],
+                       'alias': cfg['served-model-name'], 'max_model_len': context_tokens,
+                       'max_num_seqs': max_sequences, 'engine': engine, 'profile': profile_id,
+                       'configured_context_tokens': policy.get('context-tokens', context_tokens),
                        'qualification': read_json(STATE / 'qualification' / f'{current["active"]}.json', {'daily_use': 'pending'})})
         result['test_results'] = {mode: read_json(ROOT / 'reports' / current['active'] / f'{mode}.json', {}).get('passed', 'pending')
                                   for mode in ('smoke', 'api', 'context', 'benchmark', 'soak')}
@@ -494,14 +662,20 @@ def status():
                              'restart_count': c['RestartCount'], 'restart_policy': c['HostConfig']['RestartPolicy']['Name']}
                             for c in containers()]
     result['conflicting_containers'] = conflicts()
-    result['prepared'] = read_json(STATE / 'prepared.json')
+    prepared_dir = STATE / 'prepared'
+    result['prepared'] = {p.stem: read_json(p) for p in sorted(prepared_dir.glob('*.json'))} \
+        if prepared_dir.is_dir() else {}
+    legacy = read_json(STATE / 'prepared.json')
+    if legacy and profiles.DEFAULT_PROFILE not in result['prepared']:
+        result['prepared'][profiles.DEFAULT_PROFILE] = legacy
     print(json.dumps(result, indent=2))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', nargs='?', default='status', choices=['doctor', 'prepare', 'start', 'stop',
-                        'restart', 'status', 'logs', 'test', 'upgrade', 'rollback', 'validate', 'accept', 'help'])
+    parser.add_argument('command', nargs='?', default='status', choices=['doctor', 'profiles', 'download', 'prepare',
+                        'start', 'stop', 'restart', 'status', 'logs', 'test', 'upgrade', 'rollback', 'validate', 'accept', 'help'])
+    parser.add_argument('--profile', help=f'Model profile ID (default: {profiles.DEFAULT_PROFILE})')
     parser.add_argument('--release', help='Prepared release ID (default: last prepared)')
     parser.add_argument('--mode', choices=['smoke', 'api', 'context', 'benchmark', 'soak'], default='smoke')
     parser.add_argument('--disruptive', action='store_true', help='Allow long stress tests while clients are paused')
@@ -510,17 +684,35 @@ def main():
     if args.command == 'help':
         parser.print_help()
         return
-    host, secrets, model, image = config()
     cmd = args.command
     if cmd == 'validate':
-        print('Configuration valid; hardware and runtime acceptance are separate.')
+        _, _, profile, _ = config(args.profile or profiles.DEFAULT_PROFILE)
+        print(f'Profile {profile["metadata"]["id"]} is valid; hardware and runtime acceptance are separate.')
+    elif cmd == 'profiles':
+        active = state()['active']
+        active_profile = None
+        if active:
+            active_profile = release(active)[1]['identity'].get('profile', profiles.DEFAULT_PROFILE)
+        rows = [{'id': p['id'], 'engine': p['engine'], 'display_name': p['display-name'],
+                 'context_tokens': p['context-tokens'], 'active': p['id'] == active_profile,
+                 'prepared': (read_json(STATE / 'prepared' / f'{p["id"]}.json') or
+                              (read_json(STATE / 'prepared.json')
+                               if p['id'] == profiles.DEFAULT_PROFILE else None))}
+                for p in profiles.list_profiles(ROOT)]
+        print(json.dumps(rows, indent=2))
     elif cmd == 'doctor':
+        host, _ = host_config()
         doctor(host)
+    elif cmd == 'download':
+        host, secrets, profile, image = config(args.profile or profiles.DEFAULT_PROFILE)
+        download(host, secrets, profile, image)
     elif cmd == 'prepare':
-        prepare(host, secrets, model, image)
+        host, secrets, profile, image = config(args.profile or profiles.DEFAULT_PROFILE)
+        prepare(host, secrets, profile, image)
     elif cmd == 'status':
         status()
     elif cmd == 'logs':
+        secrets = secrets_config()
         # Avoid printing unrestricted Docker logs: redact credentials before display.
         rows = containers()
         for row in rows:
@@ -531,19 +723,32 @@ def main():
                     output = output.replace(value, '[REDACTED]')
             print(output)
     elif cmd in ('start', 'upgrade', 'rollback'):
+        secrets = secrets_config()
         current = state()
         if cmd == 'rollback':
             candidate = current['previous']
         else:
-            candidate = args.release or read_json(STATE / 'prepared.json', {}).get('release')
+            profile_id = args.profile or profiles.DEFAULT_PROFILE
+            profiles.resolve(ROOT, profile_id)
+            prepared = read_json(STATE / 'prepared' / f'{profile_id}.json')
+            if prepared is None and profile_id == profiles.DEFAULT_PROFILE:
+                prepared = read_json(STATE / 'prepared.json', {})
+            candidate = args.release or (prepared or {}).get('release')
         if not candidate:
-            fail('No prepared release or rollback target is available')
+            fail('No prepared release for the selected profile or rollback target is available')
+        if args.release and args.profile:
+            _, selected = release(candidate)
+            actual = selected['identity'].get('profile', profiles.DEFAULT_PROFILE)
+            if actual != args.profile:
+                fail(f'Release belongs to profile {actual}, not {args.profile}')
         replace(candidate, secrets)
     elif cmd == 'stop':
+        secrets = secrets_config()
         current = state()
         stop(current['active'], secrets)
         atomic(STATE / 'active.json', current | {'running': False})
     elif cmd == 'restart':
+        secrets = secrets_config()
         current = state()
         if not current['active']:
             fail('No active release')
@@ -551,6 +756,7 @@ def main():
         atomic(STATE / 'active.json', current | {'running': False})
         replace(current['active'], secrets)
     elif cmd == 'test':
+        secrets = secrets_config()
         if args.mode in ('context', 'soak', 'benchmark') and not args.disruptive:
             fail('Use --disruptive with clients paused for long/performance tests')
         active = state()['active']
@@ -558,6 +764,7 @@ def main():
             fail('No active release')
         test_release(active, secrets, args.mode)
     elif cmd == 'accept':
+        secrets = secrets_config()
         current = state()
         active = current['active']
         if not active or not args.evidence:
@@ -570,8 +777,19 @@ def main():
             report = read_json(ROOT / 'reports' / active / f'{mode}.json', {})
             if report.get('passed') is not True:
                 fail(f'{mode} has not passed for this release')
+            if report.get('release') != active or report.get('mode') != mode:
+                fail(f'{mode} report belongs to a different release or mode')
+            identity = release(active)[1]['identity']
+            if identity.get('schema_version', 1) >= 2:
+                expected_harness = hashlib.sha256((ROOT / 'tests/acceptance.py').read_bytes()).hexdigest()
+                if report.get('policy_sha256') != identity['policy_sha256'] or \
+                        report.get('harness_sha256') != expected_harness:
+                    fail(f'{mode} report policy or test harness identity does not match this release')
         test_release(active, secrets, 'smoke')
-        atomic(STATE / 'qualification' / f'{active}.json', {'daily_use': 'accepted', 'evidence': evidence, 'time': time.time()})
+        accepted_context = release(active)[1]['identity'].get('profile_policy', {}).get(
+            'context-tokens', release(active)[1]['identity']['config'].get('max-model-len'))
+        atomic(STATE / 'qualification' / f'{active}.json', {'daily_use': 'accepted',
+               'qualified_context_tokens': accepted_context, 'evidence': evidence, 'time': time.time()})
         for c in containers():
             run(['docker', 'update', '--restart', 'unless-stopped', c['Id']])
         atomic(STATE / 'active.json', current | {'accepted': active,

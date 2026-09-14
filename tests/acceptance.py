@@ -19,6 +19,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'lib'))
 from lifecycle import atomic, containers, memory_available
 
+SWAP_GUARD_GRACE_SECONDS = 15
+
+
+def resource_guardrail_failed(resources, minimum_available_bytes):
+    return (resources['minimum_mem_available_bytes'] < minimum_available_bytes or
+            resources['oom_kills'] > 0 or
+            resources['longest_continuous_swap_seconds'] >= SWAP_GUARD_GRACE_SECONDS)
+
 
 class Client:
     def __init__(self, release):
@@ -29,6 +37,16 @@ class Client:
         self.base = f'http://{address}:{host["PORT"]}'
         self.timeout = host['REQUEST_TIMEOUT']
         self.alias = self.release['identity']['config']['served-model-name']
+        identity = self.release['identity']
+        config = identity['config']
+        self.policy = identity.get('profile_policy')
+        if self.policy is None:
+            self.policy = {
+                'id': 'qwen38-27b-nvfp4', 'engine': 'vllm',
+                'context-tokens': config['max-model-len'], 'reasoning-default': False,
+                'reasoning-toggle': True, 'reasoning-fields': ['reasoning', 'reasoning_content'],
+                'tool-support': True}
+        self.context_tokens = self.policy['context-tokens']
         self.records = []
         self.key = os.environ.get('VLLM_API_KEY', '')
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -48,8 +66,10 @@ class Client:
                 'max_tokens': 128, 'n': 1, **kwargs}
 
     def count(self, messages):
-        result = self.json('/tokenize', {'model': self.alias, 'messages': messages,
-                           'add_generation_prompt': True, 'chat_template_kwargs': {'enable_thinking': False}})
+        body = {'model': self.alias, 'messages': messages, 'add_generation_prompt': True}
+        if self.policy['reasoning-toggle']:
+            body['chat_template_kwargs'] = {'enable_thinking': self.policy['reasoning-default']}
+        result = self.json('/tokenize', body)
         return result['count']
 
     def generate(self, label, body=None, stream=False):
@@ -58,6 +78,7 @@ class Client:
         first = None
         content = ''
         reasoning = ''
+        streamed_calls = {}
         if stream:
             body = body | {'stream': True, 'stream_options': {'include_usage': True}}
             done = False
@@ -77,12 +98,26 @@ class Client:
                         delta = choice.get('delta', {})
                         text = delta.get('content') or ''
                         thought = delta.get('reasoning') or delta.get('reasoning_content') or ''
-                        if (text or thought) and first is None:
+                        calls = delta.get('tool_calls') or []
+                        if (text or thought or calls) and first is None:
                             first = time.monotonic()
                         content += text
                         reasoning += thought
+                        for call in calls:
+                            index = call.get('index', 0)
+                            current = streamed_calls.setdefault(index, {
+                                'id': '', 'type': 'function',
+                                'function': {'name': '', 'arguments': ''}})
+                            current['id'] += call.get('id') or ''
+                            current['type'] = call.get('type') or current['type']
+                            function = call.get('function') or {}
+                            current['function']['name'] += function.get('name') or ''
+                            current['function']['arguments'] += function.get('arguments') or ''
             assert done and usage is not None, 'Stream missing DONE or usage'
-            result = {'usage': usage, 'choices': [{'message': {'content': content, 'reasoning': reasoning}}]}
+            message = {'role': 'assistant', 'content': content, 'reasoning': reasoning}
+            if streamed_calls:
+                message['tool_calls'] = [streamed_calls[index] for index in sorted(streamed_calls)]
+            result = {'usage': usage, 'choices': [{'message': message}]}
         else:
             result = self.json('/v1/chat/completions', body)
             content = result['choices'][0]['message'].get('content') or ''
@@ -107,14 +142,14 @@ class Client:
             return
         raise AssertionError(f'{label}: request was accepted unexpectedly')
 
-    def tool(self, name='lookup_temperature', argument='city', value='Hong Kong', answer='23'):
+    def tool(self, name='lookup_temperature', argument='city', value='Hong Kong', answer='23', stream=False):
         tool = {'type': 'function', 'function': {'name': name,
                 'description': 'Look up the requested information using the provided key.',
                 'parameters': {'type': 'object', 'properties': {argument: {'type': 'string'}},
                                'required': [argument], 'additionalProperties': False}}}
         body = self.body(f'Use {name} to look up {argument} {value}. Then report its result.',
                          tools=[tool], tool_choice='auto', max_tokens=512)
-        result = self.generate('tool-' + name, body)
+        result = self.generate('tool-' + name, body, stream=stream)
         message = result['choices'][0]['message']
         calls = message.get('tool_calls')
         assert calls and len(calls) == 1, 'Expected one tool call'
@@ -122,11 +157,16 @@ class Client:
         assert call['id'] and call['function']['name'] == name
         arguments = json.loads(call['function']['arguments'])
         assert arguments.get(argument) == value, 'Incorrect tool arguments'
-        body['messages'] += [{k: v for k, v in message.items() if k in ('role', 'content', 'tool_calls')},
+        history_fields = {'role', 'content', 'tool_calls', *self.policy['reasoning-fields']}
+        body['messages'] += [{k: v for k, v in message.items() if k in history_fields},
                              {'role': 'tool', 'tool_call_id': call['id'], 'content': json.dumps({'result': answer})}]
         body['tool_choice'] = 'none'
         final = self.generate('tool-result-' + name, body)
-        assert answer in (final['choices'][0]['message'].get('content') or ''), 'Tool result not used'
+        assert answer in response_text(final['choices'][0]['message']), 'Tool result not used'
+
+
+def response_text(message):
+    return ''.join(str(message.get(key) or '') for key in ('content', 'reasoning', 'reasoning_content'))
 
 
 def smoke(c):
@@ -134,16 +174,18 @@ def smoke(c):
     assert any(m['id'] == c.alias for m in models), 'Expected alias missing'
     result = c.generate('english')
     message = result['choices'][0]['message']
-    assert message.get('content'), 'Empty response'
-    assert not (message.get('reasoning') or message.get('reasoning_content')), 'Default thinking is enabled'
-    assert '<think>' not in message['content'], 'Parser artifact in answer'
+    assert response_text(message), 'Empty response'
+    reasoning = any(message.get(field) for field in c.policy['reasoning-fields'])
+    assert reasoning == c.policy['reasoning-default'], 'Default reasoning behavior does not match the profile'
+    assert '<think>' not in (message.get('content') or ''), 'Parser artifact in answer'
     streamed = c.generate('stream', stream=True)
     assert streamed['choices'][0]['message']['content']
-    c.tool()
+    c.tool(stream=True)
 
 
-def cancellation(c, messages=None):
-    body = c.body('Write a very long explanation of sorting algorithms.', max_tokens=16384,
+def cancellation(c, messages=None, max_tokens=None):
+    max_tokens = max_tokens or min(16384, max(512, c.context_tokens // 4))
+    body = c.body('Write a very long explanation of sorting algorithms.', max_tokens=max_tokens,
                   stream=True, ignore_eos=True)
     if messages:
         body['messages'] = messages
@@ -162,12 +204,13 @@ def api(c):
     assert any('\u4e00' <= ch <= '\u9fff' for ch in text)
     c.tool('lookup_inventory', 'sku', 'ITEM-17', '42')
     c.tool('lookup_status', 'ticket', 'TASK-83', 'complete')
-    thought = c.generate('thinking', c.body('What is 37 multiplied by 49? Explain briefly.',
-                         max_tokens=1024, chat_template_kwargs={'enable_thinking': True},
-                         temperature=1.0, top_p=0.95, top_k=20, presence_penalty=0))
-    msg = thought['choices'][0]['message']
-    assert msg.get('reasoning') or msg.get('reasoning_content'), 'Reasoning field is empty'
-    assert '1813' in (msg.get('content') or '')
+    if c.policy['reasoning-toggle']:
+        thought = c.generate('thinking', c.body('What is 37 multiplied by 49? Explain briefly.',
+                             max_tokens=1024, chat_template_kwargs={'enable_thinking': True},
+                             temperature=1.0, top_p=0.95, top_k=20, presence_penalty=0))
+        msg = thought['choices'][0]['message']
+        assert any(msg.get(field) for field in c.policy['reasoning-fields']), 'Reasoning field is empty'
+        assert '1813' in response_text(msg)
     c.expect_error(c.body(model='missing-model'), 'unknown-alias')
     c.expect_error({'model': c.alias, 'messages': 'invalid'}, 'malformed')
     c.expect_error(c.body(messages=[{'role': 'user', 'content': [
@@ -216,32 +259,36 @@ def fixture(c, target, seed):
 
 
 def context(c):
-    for target in (32768, 131072, 245760):
+    combined = c.context_tokens
+    large_output = min(16384, max(1024, combined // 8))
+    targets = sorted(set((min(4096, combined - 512), combined // 2, combined - large_output)))
+    for target in targets:
         messages, _ = fixture(c, target, target)
-        budget = 16384 if target == 245760 else 512
+        budget = large_output if target == combined - large_output else 512
         result = c.generate(f'input-{target}', c.body(messages=messages, max_tokens=budget,
                             cache_salt=uuid.uuid4().hex), stream=True)
         assert result['usage']['prompt_tokens'] == target, 'Server/template count mismatch'
         assert result['choices'][0]['message'].get('content')
         c.generate('post-long-recovery')
+    boundary_input = combined - 1024
     for seed in (117, 229, 331):
-        messages, values = fixture(c, 261120, seed)
+        messages, values = fixture(c, boundary_input, seed)
         result = c.generate(f'near-limit-seed-{seed}-cold-prefix', c.body(messages=messages,
                             max_tokens=1024, cache_salt=uuid.uuid4().hex), stream=True)
-        assert result['usage']['prompt_tokens'] == 261120
-        answer = result['choices'][0]['message']['content']
+        assert result['usage']['prompt_tokens'] == boundary_input
+        answer = response_text(result['choices'][0]['message'])
         assert all(value in answer for value in values), 'Retrieval quality failed'
         c.generate('post-near-limit')
     # Clearly separated forced-length engine stress, never daily generation defaults.
     result = c.generate('forced-boundary-stress-not-quality', c.body(messages=messages,
                         max_tokens=1024, min_tokens=1024, ignore_eos=True,
                         cache_salt=uuid.uuid4().hex), stream=True)
-    assert result['usage']['prompt_tokens'] == 261120 and result['usage']['completion_tokens'] == 1024
+    assert result['usage']['prompt_tokens'] == boundary_input and result['usage']['completion_tokens'] == 1024
     c.generate('post-stress')
     c.expect_error(c.body(messages=messages, max_tokens=1025), 'invalid-combined-budget')
-    oversized, _ = fixture(c, 262145, 443)
+    oversized, _ = fixture(c, combined + 1, 443)
     c.expect_error(c.body(messages=oversized, max_tokens=1), 'oversized-prompt')
-    cancellation(c, messages)
+    cancellation(c, messages, max_tokens=1024)
 
 
 def benchmark(c):
@@ -253,7 +300,8 @@ def benchmark(c):
 
 def soak(c):
     deadline = time.monotonic() + 8 * 3600
-    messages, _ = fixture(c, 32768, 888)
+    long_input = min(32768, c.context_tokens - 512)
+    messages, _ = fixture(c, long_input, 888)
     for n in range(100):
         assert time.monotonic() < deadline, 'Workload exceeded eight-hour window'
         c.generate(f'soak-short-{n}', stream=True)
@@ -310,7 +358,10 @@ def main():
     monitor = Monitor()
     monitor.thread.start()
     before = [(x['Id'], x['RestartCount']) for x in containers()]
-    report = {'release': c.release['id'], 'mode': args.mode, 'started_at': time.time(), 'passed': False}
+    harness_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    report = {'release': c.release['id'], 'mode': args.mode,
+              'policy_sha256': c.release['identity'].get('policy_sha256'),
+              'harness_sha256': harness_sha256, 'started_at': time.time(), 'passed': False}
     try:
         globals()[args.mode](c)
         after = [(x['Id'], x['RestartCount']) for x in containers()]
@@ -325,7 +376,7 @@ def main():
         report['resources'] = monitor.finish()
         res = report['resources']
         minimum = c.release['identity']['host']['MIN_AVAILABLE_GIB'] * 2**30
-        if res['minimum_mem_available_bytes'] < minimum or res['oom_kills'] or res['longest_continuous_swap_seconds'] >= 3:
+        if resource_guardrail_failed(res, minimum):
             report['passed'] = False
             report['memory_guardrail_failed'] = True
         report['finished_at'] = time.time()

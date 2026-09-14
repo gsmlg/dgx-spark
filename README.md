@@ -1,7 +1,14 @@
 # Spark LLM
 
-One native ARM64 vLLM service for `Inferact/Qwen3.8-27B-NVFP4`, exposed as
-`local-assistant`. The configured combined input/output context is 262,144 tokens.
+One native ARM64 inference service, exposed as `local-assistant`, with safe switching
+between three model profiles. Only one model is resident at a time.
+
+| Profile | Engine | Checkpoint | Initial combined context |
+|---|---|---|---:|
+| `qwen38-27b-nvfp4` (default) | vLLM | `Inferact/Qwen3.8-27B-NVFP4` | 262,144 |
+| `laguna-s-2.1-nvfp4` | vLLM | `poolside/Laguna-S-2.1-NVFP4` | 5,120 |
+| `qwen38-flash-next-nvfp4` | SGLang | `nvidia/Qwen3.8-Flash-Next-NVFP4` | 32,768 |
+
 **Configured capacity is not qualified capacity.** Check status and reports for actual results.
 
 Host validation on 2026-09-08: release `34d2325c4774623a9d1aef00` passed the
@@ -27,7 +34,9 @@ cp -n host.env.example host.env
 cp -n secrets.env.example secrets.env
 chmod 600 secrets.env
 bin/spark-llm validate
+bin/spark-llm profiles
 bin/spark-llm doctor
+bin/spark-llm download
 bin/spark-llm prepare
 bin/spark-llm start
 bin/spark-llm status
@@ -35,10 +44,13 @@ bin/spark-llm test --mode api
 ```
 
 `host.env` uses literal, unquoted values. Unknown/duplicate keys and substitutions
-are rejected. The selected image downloads during preparation; the full model
-snapshot is downloaded into the existing cache and checked against Hub file
-sizes and SHA256/Git blob identities. The downloader runs in an ephemeral,
-GPU-free candidate-image container so no host Python ML packages are needed.
+are rejected. `download --profile <id>` fetches the selected profile's full pinned
+snapshot without stopping or replacing the running model. It stores a verified manifest
+under `state/downloaded/`, which a later `prepare` reuses after checking every file is
+still present at the recorded size. If no matching pre-download exists, preparation
+downloads the snapshot itself. Files are checked against Hub sizes and SHA256/Git blob
+identities. The downloader runs in an ephemeral, GPU-free candidate-image container, so
+no host Python ML packages are needed.
 Preparation also executes a small CUDA matrix operation, validates the image's
 native ARM64 architecture, entrypoint, parsers and CLI options, and records a
 resolved release. Image/model execution compatibility still needs generation tests.
@@ -93,6 +105,20 @@ sequence means overlapping HTTP requests can wait; it does not bound the HTTP qu
 ## Lifecycle
 
 ```sh
+bin/spark-llm profiles
+bin/spark-llm validate --profile laguna-s-2.1-nvfp4
+bin/spark-llm download --profile laguna-s-2.1-nvfp4
+bin/spark-llm prepare --profile laguna-s-2.1-nvfp4
+bin/spark-llm start --profile laguna-s-2.1-nvfp4
+
+# Switch to Flash-Next after preparing its SGLang image, checkpoint, and PLE data.
+bin/spark-llm download --profile qwen38-flash-next-nvfp4
+bin/spark-llm prepare --profile qwen38-flash-next-nvfp4
+bin/spark-llm start --profile qwen38-flash-next-nvfp4
+
+# Switch back to the existing/default profile.
+bin/spark-llm start --profile qwen38-27b-nvfp4
+
 bin/spark-llm stop
 bin/spark-llm restart
 bin/spark-llm logs                     # bounded tail with known credentials redacted
@@ -101,6 +127,22 @@ bin/spark-llm upgrade                  # use latest prepared release
 bin/spark-llm start --release <id>      # select an immutable prepared release
 bin/spark-llm rollback                 # restore previous accepted release
 ```
+
+Preparation is profile-scoped under `state/prepared/<profile>.json`, so preparing one
+model does not change which release another profile starts. You can also select any
+immutable prepared release with `start --release <id>`; combining `--release` and
+`--profile` verifies that they match. Switching is planned downtime, waits for ten quiet swap seconds after readiness, and runs smoke
+generation before the new release becomes active. A failed switch restores the last
+accepted release when one exists.
+
+Flash-Next uses the upstream Spark SGLang image and mounts a release-policy-owned PLE
+directory below `RUNTIME_CACHE/ple`. The checkpoint cache remains read-only. Its first
+start materializes a roughly 47.7 GiB table on local NVMe. Because current upstream
+builds rewrite an existing table slowly, every launch first clears only that release's
+ownership-marked PLE directory and regenerates it. Review free space and startup timing before use.
+Neither new profile is hardware-qualified merely by being present in this repository.
+The design rationale, qualification gates, and model-specific limitations are in
+[docs/model-deployment](docs/model-deployment/README.md).
 
 Mutations share a nonblocking host lock. Prepared releases contain a frozen Compose
 file, literal vLLM configuration, artifact hashes, image identity and runtime metadata.
@@ -130,7 +172,9 @@ bin/spark-llm test --mode soak --disruptive
 
 Reports are local, ignored by Git and exclude request/response bodies. They distinguish
 requested output from generated tokens, include host memory/swap/OOM observations,
-and preserve individual runs. Context fixtures use the deployed pinned tokenizer and
+and preserve individual runs. The 16 GiB available-memory floor and any OOM fail the
+gate; swap is classified as sustained after 15 continuous swap-active samples. Context
+fixtures use the deployed pinned tokenizer and
 chat template through `/tokenize`, then compare counts with inference usage. Three
 seeded near-limit retrieval trials use distinct cache salts. A separate forced-length
 stress request reaches exactly 262,144 total tokens; forced output is not a quality test.

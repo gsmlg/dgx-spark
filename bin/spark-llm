@@ -3,7 +3,7 @@ set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONDONTWRITEBYTECODE=1
 case "${1:-help}" in
-  prepare|start|stop|restart|upgrade|rollback|test|accept)
+  download|prepare|start|stop|restart|upgrade|rollback|test|accept)
     mkdir -p "$root/state"
     exec 9>"$root/state/mutation.lock"
     flock -n 9 || { echo 'Another lifecycle operation is running.' >&2; exit 1; }

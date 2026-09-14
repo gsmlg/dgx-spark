@@ -1,0 +1,21 @@
+model-path: nvidia/Qwen3.8-Flash-Next-NVFP4
+# Resolved from the Hub on 2026-09-13.
+revision: fc694b54fb0174e0913e6adf86691ef85a4ead47
+tokenizer-revision: fc694b54fb0174e0913e6adf86691ef85a4ead47
+served-model-name: local-assistant
+tp-size: 1
+context-length: 32768
+max-running-requests: 1
+mem-fraction-static: 0.85
+chunked-prefill-size: 4096
+ple-offload-embedding: true
+ple-offload-backend: file
+ple-offload-dir: /ple-cache
+moe-runner-backend: flashinfer_cutlass
+fp4-gemm-backend: flashinfer_cutlass
+page-size: 64
+# One request uses five recurrent-state slots with the default strategy.
+max-mamba-cache-size: 5
+reasoning-parser: auto
+tool-call-parser: auto
+trust-remote-code: true

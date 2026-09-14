@@ -30,16 +30,18 @@ These are integration defaults to test, not a copy of the publisher's throughput
 |---|---|
 | Served alias | `local-assistant` |
 | Tensor parallelism | 1 |
-| Combined context | 32,768 tokens |
+| Combined context | 5,120 tokens |
 | Scheduled requests | 1 |
-| GPU allocation candidate | `gpu-memory-utilization: 0.85`; reject if host headroom fails |
-| Prefill work | Start with a 4,096-token batch cap if supported; inspect actual behavior |
+| GPU allocation candidate | `gpu-memory-utilization: 0.776`; eager execution avoids the measured CUDA-graph tuning spike |
+| Prefill work | 64-token batch cap to bound measured operator-tuning workspace; chunked prefill remains enabled |
 | Quantization | Detect checkpoint metadata; do not force an unrelated quantization mode |
 | Reasoning/tool parsers | `poolside_v1` for both; validate through runtime and API tests |
 | Sampling | Pinned checkpoint generation defaults, not the existing Qwen override mapping |
-| KV precision | Verify the checkpoint/recipe FP8 path and record the actual resolved dtype |
+| KV precision | `fp8_e4m3`; verify the effective runtime dtype and 32K capacity |
 | Speculation | Disabled |
 | Input modalities | Text only |
+
+Host validation on 2026-09-14 found that the 32,768-token FP8-KV candidate needed 1.35 GiB of KV cache while 0.80 utilization supplied 0.77 GiB. Raising utilization to 0.81 caused a sustained sub-16-GiB memory interval during kernel tuning. Warm-cache retries at 0.776 varied: one estimated 7,888 tokens, while a later restart estimated 5,632 tokens. The initial restart-tolerant baseline is therefore 5,120 tokens at 0.776; 32K remains a separate failed capacity result, not a qualified claim.
 
 The Poolside parser choice and checkpoint-owned sampling follow the native serving recipe. Its example is not an instruction to inherit public binding or a high scheduled-request limit. [L3](../sources.md)
 
@@ -55,7 +57,8 @@ Do not carry Qwen's `generation-config: vllm` plus its overrides into this profi
 
 ## 5. Deployment sequence after implementation
 
-The `--profile` commands below are proposed additions and are not supported by the reviewed checkout yet.
+The profile commands below are implemented. Preparation still has to prove the selected
+image and pinned checkpoint on the target Spark.
 
 ```sh
 bin/spark-llm validate --profile laguna-s-2.1-nvfp4

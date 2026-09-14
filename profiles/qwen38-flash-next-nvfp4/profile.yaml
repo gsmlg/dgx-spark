@@ -1,0 +1,20 @@
+schema-version: 1
+id: qwen38-flash-next-nvfp4
+engine: sglang
+display-name: Qwen3.8 Flash Next NVFP4
+text-only: true
+# The current SGLang recipe documents always-on reasoning for this runtime candidate.
+reasoning-default: true
+reasoning-toggle: false
+reasoning-fields: [reasoning_content, reasoning]
+tool-support: true
+context-tokens: 32768
+max-running-requests: 1
+runtime-environment:
+  SGLANG_QWEN4_PLE_FILE_RSS_BUDGET_GB: 8
+required-runtime-features: [--ple-offload-embedding, --ple-offload-backend, flashinfer_cutlass]
+derived-cache:
+  kind: ple
+  mount: /ple-cache
+  minimum-free-gib: 64
+  reset-before-start: true

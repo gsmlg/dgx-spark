@@ -1,0 +1,14 @@
+schema-version: 1
+id: qwen38-27b-nvfp4
+engine: vllm
+display-name: Qwen3.8 27B NVFP4
+text-only: true
+reasoning-default: false
+reasoning-toggle: true
+reasoning-fields: [reasoning, reasoning_content]
+tool-support: true
+context-tokens: 262144
+max-running-requests: 1
+runtime-environment: {}
+required-runtime-features: [qwen3, qwen3_coder]
+derived-cache: null

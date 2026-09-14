@@ -77,7 +77,8 @@ The upstream model is multimodal, but this repo extension is text-only. Verify t
 
 ## 7. Deployment sequence after implementation
 
-The `--profile` option below must first be implemented; it is absent from the reviewed checkout.
+The profile commands below are implemented. Preparation still has to prove the selected
+SGLang image, file-backed PLE path, and pinned checkpoint on the target Spark.
 
 ```sh
 bin/spark-llm validate --profile qwen38-flash-next-nvfp4

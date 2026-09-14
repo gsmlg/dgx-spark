@@ -98,7 +98,7 @@ Keep the existing 16 GiB `MemAvailable` guardrail as the initial proposal unless
 
 Treat GPU allocations, anonymous host memory, pinned memory, page cache, compilation and recurrent-state pools as consumers of one host budget. NVMe-backed PLE is not extra RAM; see Q1, Q2, Q5 and H1 in the source catalogue.
 
-Add a bounded host-side monitor during startup and disruptive tests. It may stop only the candidate container identified by the owned Compose project and release label. Record the memory failure, retain diagnostics and use normal rollback. Avoid host-wide cache dropping, swap changes, killing unrelated processes, driver upgrades or disabling kernel/device checks.
+Add a bounded host-side monitor during startup and disruptive tests. Record single-sample dips, but stop the candidate only after 15 continuous seconds below the configured floor. During acceptance, classify swap as sustained after 15 continuous swap-active samples; retain shorter bursts in the report. It may stop only the candidate container identified by the owned Compose project and release label. Record the memory failure, retain diagnostics and use normal rollback. Avoid host-wide cache dropping, swap changes, killing unrelated processes, driver upgrades or disabling kernel/device checks.
 
 ## 8. Flash-Next derived-file lifecycle
 

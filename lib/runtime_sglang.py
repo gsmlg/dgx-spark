@@ -6,7 +6,7 @@ import yaml
 
 
 MODEL_KEYS = {'model-path', 'revision', 'tokenizer-revision', 'served-model-name', 'tp-size',
-              'context-length', 'max-running-requests', 'mem-fraction-static',
+              'context-length', 'max-running-requests', 'max-total-tokens', 'mem-fraction-static',
               'chunked-prefill-size', 'ple-offload-embedding', 'ple-offload-backend',
               'ple-offload-dir', 'moe-runner-backend', 'fp4-gemm-backend', 'page-size',
               'max-mamba-cache-size', 'reasoning-parser', 'tool-call-parser', 'trust-remote-code'}
@@ -17,7 +17,7 @@ def validate(native, metadata):
         raise RuntimeError('sglang.yaml has missing or unknown settings')
     if not re.fullmatch(r'[0-9a-f]{40}', str(native['revision'])) or native['tokenizer-revision'] != native['revision']:
         raise RuntimeError('Model and tokenizer revisions must be the same full commit')
-    for key in ('tp-size', 'context-length', 'max-running-requests', 'chunked-prefill-size',
+    for key in ('tp-size', 'context-length', 'max-running-requests', 'max-total-tokens', 'chunked-prefill-size',
                 'page-size', 'max-mamba-cache-size'):
         if type(native[key]) is not int or native[key] <= 0:
             raise RuntimeError(f'{key} must be a positive integer')
@@ -27,6 +27,8 @@ def validate(native, metadata):
         raise RuntimeError('Invalid SGLang memory fraction or tensor parallelism')
     if native['context-length'] != metadata['context-tokens'] or native['max-running-requests'] != metadata['max-running-requests']:
         raise RuntimeError('Native context/concurrency does not match profile policy')
+    if native['max-total-tokens'] < native['context-length']:
+        raise RuntimeError('max-total-tokens must cover one configured-context request')
     if native['ple-offload-embedding'] is not True or native['ple-offload-backend'] != 'file' or native['ple-offload-dir'] != '/ple-cache':
         raise RuntimeError('Flash-Next requires the owned file-backed PLE cache')
     if native['moe-runner-backend'] != 'flashinfer_cutlass' or native['fp4-gemm-backend'] != 'flashinfer_cutlass':

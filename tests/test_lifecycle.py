@@ -37,6 +37,8 @@ class ConfigurationTests(unittest.TestCase):
                                             authenticated=True)
         self.assertEqual(rendered['entrypoint'], ['python3', '-m', 'sglang.launch_server'])
         self.assertIn('--ple-offload-embedding', rendered['command'])
+        self.assertIn('--max-total-tokens', rendered['command'])
+        self.assertEqual(rendered['resolved']['max-total-tokens'], 32768)
         self.assertIn('${VLLM_API_KEY:?}', rendered['command'])
         compose = lc.render_compose(rendered, profile['metadata'])
         self.assertIn('${PLE_CACHE_DIR:?}', compose)

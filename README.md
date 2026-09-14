@@ -131,7 +131,8 @@ bin/spark-llm rollback                 # restore previous accepted release
 Preparation is profile-scoped under `state/prepared/<profile>.json`, so preparing one
 model does not change which release another profile starts. You can also select any
 immutable prepared release with `start --release <id>`; combining `--release` and
-`--profile` verifies that they match. Switching is planned downtime, waits for ten quiet swap seconds after readiness, and runs smoke
+`--profile` verifies that they match. Switching is planned downtime, waits up to ten
+minutes for ten quiet swap seconds after readiness, and runs smoke
 generation before the new release becomes active. A failed switch restores the last
 accepted release when one exists.
 

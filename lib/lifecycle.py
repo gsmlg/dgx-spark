@@ -500,7 +500,7 @@ def swap_pages():
     return values['pswpin'], values['pswpout']
 
 
-def wait_for_swap_quiet(rec, quiet_seconds=10, timeout_seconds=60):
+def wait_for_swap_quiet(rec, quiet_seconds=10, timeout_seconds=600):
     deadline = time.monotonic() + timeout_seconds
     last = swap_pages()
     quiet_since = time.monotonic()

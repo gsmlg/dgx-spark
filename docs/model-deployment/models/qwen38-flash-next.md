@@ -40,6 +40,7 @@ If no compatible prebuilt ARM64 image passes admission, mark the profile blocked
 | Tensor parallelism | 1; one Spark only |
 | Combined context | 32,768 tokens |
 | Running requests | 1; inspect effective scheduler limit |
+| Shared KV pool | `max-total-tokens: 32768`; bound allocation to the single configured-context request |
 | Static allocation starting point | `mem-fraction-static: 0.85`, subject to host guardrails |
 | PLE | NVMe file backend; separate writable derived-data mount |
 | Expert backend | Explicit compatible CUTLASS path; validate resolved logs |
@@ -49,7 +50,19 @@ If no compatible prebuilt ARM64 image passes admission, mark the profile blocked
 | MTP/speculation | Disabled |
 | Modality | Text-only serving and media rejection |
 
-The numbers in this table are proposed local qualification settings, not measured capacity. Do not copy the cookbook's datacenter TP, request count, cache-slot sizes or model-card million-token extension into the first release.
+Host validation on 2026-09-14 found that leaving `max-total-tokens` unset allocated a
+750,016-token BF16 KV pool (17.16 GiB) despite the single 32,768-token request policy.
+The server reached readiness, but CUDA-graph capture reported 14.92 GiB available and
+the lifecycle stopped it after 15 continuous seconds below the 16 GiB host floor. The
+profile now caps the shared KV pool at 32,768 tokens; this revised release still requires
+startup and API verification before it is considered runnable.
+
+The first bounded-KV start reached health with 32.88 GiB available during CUDA-graph
+capture, but PLE-related swap activity did not settle within the original 60-second
+post-readiness window. The lifecycle now permits a bounded ten-minute settling window
+while still requiring ten consecutive quiet seconds before smoke generation.
+
+The remaining numbers in this table are proposed local qualification settings, not measured capacity. Do not copy the cookbook's datacenter TP, request count, cache-slot sizes or model-card million-token extension into the first release.
 
 Recurrent-state precision, page size, cache strategy and slot counts must come from a compatible verified engine configuration. Record the effective pools and admitted concurrency. Native `max-running-requests` is not a guarantee of bounded HTTP admission or simultaneous long-context requests.
 

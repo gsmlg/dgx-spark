@@ -6,6 +6,8 @@ served-model-name: local-assistant
 tp-size: 1
 context-length: 32768
 max-running-requests: 1
+# Bound the shared KV pool to the only scheduled request instead of consuming all spare memory.
+max-total-tokens: 32768
 mem-fraction-static: 0.85
 chunked-prefill-size: 4096
 ple-offload-embedding: true

@@ -1,6 +1,6 @@
 # Sources and verification boundaries
 
-**Reviewed:** 2026-09-14. Sources are primary project/model documentation and repository code. Upstream pages are mutable; re-resolve revisions before implementation. Short identifiers below are citation keys used throughout this package.
+**Reviewed:** 2026-09-15. Sources are primary project/model documentation and repository code. Upstream pages are mutable; re-resolve revisions before implementation. Short identifiers below are citation keys used throughout this package.
 
 ## Repository evidence
 
@@ -58,6 +58,20 @@ PR #37068 was reported merged into `qwen4-main-squashed`, merge commit `3a09f089
 **Memory clarification:** the cookbook's language about an 8 GiB bound must not be read as a whole-host page-cache quota. PR #37068 describes trimming mappings while pages can remain in cache. The design therefore uses independent host memory and I/O observation.
 
 **Reasoning/sampling conflict:** the Qwen model card documents thinking controls and sampling guidance, but sections of the SGLang cookbook describe always-on reasoning and say sampling recommendations are unavailable. Resolve behavior against the pinned template and actual engine tests. Unsupported modes are recorded explicitly, not silently emulated or reported as passed.
+
+## GPT-OSS sources
+
+| Key | Source | Used for |
+|---|---|---|
+| G1 | [Official OpenAI GPT-OSS 120B model page](https://developers.openai.com/api/docs/models/gpt-oss-120b) | Model identity, parameter counts, context, reasoning and tool capabilities |
+| G2 | [Pinned checkpoint configuration](https://huggingface.co/openai/gpt-oss-120b/blob/b5c939de8f754692c1647ca79fbf85e8c1e70f8a/config.json) | Architecture, native context and MXFP4 quantization metadata |
+| G3 | [Official vLLM GPT-OSS recipe](https://github.com/vllm-project/recipes/blob/main/OpenAI/GPT-OSS.md) | Parser, FP8 KV cache, scheduler and prefix-cache guidance |
+| G4 | [NVIDIA DGX Spark vLLM playbook](https://github.com/NVIDIA/dgx-spark-playbooks/blob/main/nvidia/vllm/README.md) | DGX Spark support listing for the OpenAI MXFP4 checkpoint |
+
+The full revision and runtime image digest remain separate pins. The checkpoint commit
+above was resolved from the Hub on the review date; `prepare` resolves and records the
+actual ARM64 image digest. Source support statements do not replace GB10 startup,
+parser, long-context, throughput, soak or recovery qualification.
 
 ## Hardware
 

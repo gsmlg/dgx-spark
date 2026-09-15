@@ -1,0 +1,24 @@
+model: openai/gpt-oss-120b
+# Resolved from the Hub on 2026-09-15. Updates are explicit profile edits.
+revision: b5c939de8f754692c1647ca79fbf85e8c1e70f8a
+tokenizer-revision: b5c939de8f754692c1647ca79fbf85e8c1e70f8a
+served-model-name: local-assistant
+tensor-parallel-size: 1
+max-model-len: 131072
+max-num-seqs: 1
+gpu-memory-utilization: 0.70
+max-num-batched-tokens: 4096
+enable-chunked-prefill: true
+enable-prefix-caching: false
+dtype: auto
+kv-cache-dtype: fp8_e4m3
+language-model-only: true
+reasoning-parser: openai_gptoss
+tool-call-parser: openai
+enable-auto-tool-choice: true
+default-chat-template-kwargs: {}
+generation-config: auto
+override-generation-config: {}
+enable-log-requests: false
+enable-log-outputs: false
+disable-uvicorn-access-log: true

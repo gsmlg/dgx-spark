@@ -1,13 +1,14 @@
 # Spark LLM
 
 One native ARM64 inference service, exposed as `local-assistant`, with safe switching
-between four model profiles. Only one model is resident at a time.
+between five model profiles. Only one model is resident at a time.
 
 | Profile | Engine | Checkpoint | Initial combined context |
 |---|---|---|---:|
 | `qwen38-27b-nvfp4` (default) | vLLM | `Inferact/Qwen3.8-27B-NVFP4` | 262,144 |
 | `laguna-s-2.1-nvfp4` | vLLM | `poolside/Laguna-S-2.1-NVFP4` | 5,120 |
 | `laguna-xs-2.1-nvfp4` | vLLM | `poolside/Laguna-XS-2.1-NVFP4` | 262,144 |
+| `gpt-oss-120b-mxfp4` | vLLM | `openai/gpt-oss-120b` | 131,072 |
 | `qwen38-flash-next-nvfp4` | SGLang | `nvidia/Qwen3.8-Flash-Next-NVFP4` | 32,768 |
 
 **Configured capacity is not qualified capacity.** Check status and reports for actual results.
@@ -98,10 +99,15 @@ top-p 0.95, top-k 20 and presence penalty 0. API tests record the actual message
 field names in the pinned runtime; do not assume a specific reasoning field before
 those tests pass.
 
+GPT-OSS is the exception: reasoning is intrinsic rather than controlled by
+`enable_thinking`. Use its request-level reasoning-effort control and preserve the
+returned reasoning/tool history. See the model-specific guide before switching.
+
 Always specify `max_tokens`. The suggested client default is 4,096; it is not a
-server-wide output cap. A 16,384 output reservation is valid with at most 245,760
-formatted input tokens. Count system/history/tool/template tokens too. One scheduled
-sequence means overlapping HTTP requests can wait; it does not bound the HTTP queue.
+server-wide output cap. For the 262,144-token profiles, a 16,384 output reservation is
+valid with at most 245,760 formatted input tokens. Use the selected profile's configured
+context limit and count system/history/tool/template tokens too. One scheduled sequence
+means overlapping HTTP requests can wait; it does not bound the HTTP queue.
 
 ## Lifecycle
 
@@ -116,6 +122,11 @@ bin/spark-llm start --profile laguna-s-2.1-nvfp4
 bin/spark-llm download --profile laguna-xs-2.1-nvfp4
 bin/spark-llm prepare --profile laguna-xs-2.1-nvfp4
 bin/spark-llm start --profile laguna-xs-2.1-nvfp4
+
+# Prepare and switch to GPT-OSS 120B after reviewing its memory and qualification policy.
+bin/spark-llm download --profile gpt-oss-120b-mxfp4
+bin/spark-llm prepare --profile gpt-oss-120b-mxfp4
+bin/spark-llm start --profile gpt-oss-120b-mxfp4
 
 # Switch to Flash-Next after preparing its SGLang image, checkpoint, and PLE data.
 bin/spark-llm download --profile qwen38-flash-next-nvfp4
@@ -147,7 +158,7 @@ directory below `RUNTIME_CACHE/ple`. The checkpoint cache remains read-only. Its
 start materializes a roughly 47.7 GiB table on local NVMe. Because current upstream
 builds rewrite an existing table slowly, every launch first clears only that release's
 ownership-marked PLE directory and regenerates it. Review free space and startup timing before use.
-Neither new profile is hardware-qualified merely by being present in this repository.
+No candidate profile is hardware-qualified merely by being present in this repository.
 The design rationale, qualification gates, and model-specific limitations are in
 [docs/model-deployment](docs/model-deployment/README.md).
 
@@ -184,7 +195,8 @@ gate; swap is classified as sustained after 15 continuous swap-active samples. C
 fixtures use the deployed pinned tokenizer and
 chat template through `/tokenize`, then compare counts with inference usage. Three
 seeded near-limit retrieval trials use distinct cache salts. A separate forced-length
-stress request reaches exactly 262,144 total tokens; forced output is not a quality test.
+stress request reaches the active profile's configured total-token limit; forced output
+is not a quality test.
 Short measurements use 20 warm 4K-input requests with 512-token output budgets.
 
 Recovery checks requiring operator-controlled host events are documented in

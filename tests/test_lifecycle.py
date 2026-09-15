@@ -17,7 +17,8 @@ class ConfigurationTests(unittest.TestCase):
         loaded = {row['id']: lc.profiles.load(lc.ROOT, row['id'])
                   for row in lc.profiles.list_profiles(lc.ROOT)}
         self.assertEqual(set(loaded), {'qwen38-27b-nvfp4', 'laguna-s-2.1-nvfp4',
-                                      'laguna-xs-2.1-nvfp4', 'qwen38-flash-next-nvfp4'})
+                                      'laguna-xs-2.1-nvfp4', 'qwen38-flash-next-nvfp4',
+                                      'gpt-oss-120b-mxfp4'})
         host = {'BIND_HOST': '127.0.0.1', 'PORT': 8000, 'SHUTDOWN_TIMEOUT': 300}
         for profile in loaded.values():
             adapter = lc.ADAPTERS[profile['engine']]
@@ -36,6 +37,20 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(native['tool-call-parser'], 'poolside_v1')
         self.assertFalse(profile['metadata']['reasoning-default'])
         self.assertNotIn('speculative-config', native)
+
+    def test_gpt_oss_profile_pins_native_context_and_parsers(self):
+        profile = lc.profiles.load(lc.ROOT, 'gpt-oss-120b-mxfp4')
+        native = profile['native']
+        self.assertEqual(native['model'], 'openai/gpt-oss-120b')
+        self.assertEqual(native['revision'], 'b5c939de8f754692c1647ca79fbf85e8c1e70f8a')
+        self.assertEqual(native['tokenizer-revision'], native['revision'])
+        self.assertEqual(native['max-model-len'], 131072)
+        self.assertEqual(native['kv-cache-dtype'], 'fp8_e4m3')
+        self.assertEqual(native['reasoning-parser'], 'openai_gptoss')
+        self.assertEqual(native['tool-call-parser'], 'openai')
+        self.assertTrue(profile['metadata']['reasoning-default'])
+        self.assertFalse(profile['metadata']['reasoning-toggle'])
+        self.assertFalse(native['enable-prefix-caching'])
 
     def test_profile_resolution_rejects_traversal_and_unknown_ids(self):
         for profile_id in ('../../etc', 'missing-profile', '/tmp'):

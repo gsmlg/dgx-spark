@@ -12,7 +12,7 @@ between nine model profiles. Only one model is resident at a time.
 | `gemma-4-26b-a4b-nvfp4` | vLLM | `nvidia/Gemma-4-26B-A4B-NVFP4` | 262,144 |
 | `diffusiongemma-26b-a4b-it-nvfp4` | vLLM | `nvidia/diffusiongemma-26B-A4B-it-NVFP4` | 262,144 |
 | `mistral-small-4-119b-2603-nvfp4` | vLLM | `mistralai/Mistral-Small-4-119B-2603-NVFP4` | 262,144 |
-| `muse-glimmer-30b-nvfp4` | vLLM | `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` | 131,072 |
+| `muse-glimmer-30b-nvfp4` | vLLM + DFlash | `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` | 131,072 |
 | `qwen38-flash-next-nvfp4` | SGLang | `nvidia/Qwen3.8-Flash-Next-NVFP4` | 32,768 |
 
 **Configured capacity is not qualified capacity.** Check status and reports for actual results.

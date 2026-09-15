@@ -5,7 +5,7 @@ tokenizer-revision: d35cb79050f419c457611b1cee5c5d15b176f285
 served-model-name: local-assistant
 tensor-parallel-size: 1
 max-model-len: 131072
-max-num-seqs: 1
+max-num-seqs: 32
 gpu-memory-utilization: 0.70
 max-num-batched-tokens: 4096
 enable-chunked-prefill: true
@@ -22,3 +22,7 @@ override-generation-config: {}
 enable-log-requests: false
 enable-log-outputs: false
 disable-uvicorn-access-log: true
+speculative-config:
+  method: dflash
+  model: muse-glimmer-draft
+  num_speculative_tokens: 15

@@ -9,6 +9,9 @@ from huggingface_hub import HfApi, snapshot_download
 from artifact_layout import validate_artifact_layout
 
 repo, revision = sys.argv[1:3]
+kind = sys.argv[3] if len(sys.argv) > 3 else 'primary'
+if kind not in ('primary', 'auxiliary'):
+    raise RuntimeError('Unknown model artifact kind')
 api = HfApi(token=os.environ.get('HF_TOKEN') or False)
 info = api.model_info(repo, revision=revision, files_metadata=True)
 if info.sha != revision:
@@ -33,5 +36,5 @@ for entry in info.siblings:
         raise RuntimeError(f'Git blob mismatch: {entry.rfilename}')
     manifest.append({'path': entry.rfilename, 'size': entry.size, 'sha256': sha.hexdigest()})
 paths = {x['path'] for x in manifest}
-validate_artifact_layout(root, paths, 'primary')
+validate_artifact_layout(root, paths, kind)
 print('SPARK_MANIFEST=' + json.dumps({'snapshot': str(root), 'files': manifest}))

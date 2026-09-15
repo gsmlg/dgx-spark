@@ -56,7 +56,13 @@ class ConfigurationTests(unittest.TestCase):
         for profile in loaded.values():
             adapter = lc.ADAPTERS[profile['engine']]
             adapter.validate(profile['native'], profile['metadata'])
-            rendered = adapter.render(profile['native'], '/hf-cache/snapshot', host)
+            auxiliary = {model['name']: f'/hf-cache/{model["name"]}'
+                         for model in profile['metadata'].get('auxiliary-models', [])}
+            rendered = adapter.render(
+                profile['native'], '/hf-cache/snapshot', host,
+                auxiliary_models=auxiliary,
+                rust_frontend=bool(profile['metadata']['runtime-environment'].get(
+                    'VLLM_USE_RUST_FRONTEND')))
             self.assertIn('local-assistant', rendered['resolved'].values())
 
     def test_laguna_xs_profile_pins_native_context_and_parsers(self):
@@ -105,7 +111,20 @@ class ConfigurationTests(unittest.TestCase):
         self.assertFalse(native['language-model-only'])
         self.assertTrue(profile['metadata']['reasoning-default'])
         self.assertFalse(profile['metadata']['reasoning-toggle'])
-        self.assertNotIn('speculative-config', native)
+        self.assertEqual(native['max-num-seqs'], 32)
+        self.assertNotIn('VLLM_USE_RUST_FRONTEND', profile['metadata']['runtime-environment'])
+        self.assertEqual(profile['metadata']['runtime-environment']['VLLM_USE_V2_MODEL_RUNNER'], 1)
+        draft = profile['metadata']['auxiliary-models'][0]
+        self.assertEqual(draft['repository'], 'meta-models/Muse-Glimmer-30B-assistant')
+        self.assertEqual(draft['revision'], 'e8192f3a8f617f74be2ce220360c89ef4789f39f')
+        self.assertEqual(native['speculative-config']['method'], 'dflash')
+        self.assertEqual(native['speculative-config']['num_speculative_tokens'], 15)
+        rendered = lc.runtime_vllm.render(
+            native, '/hf-cache/target',
+            {'BIND_HOST': '127.0.0.1', 'PORT': 8000, 'SHUTDOWN_TIMEOUT': 300},
+            auxiliary_models={'muse-glimmer-draft': '/hf-cache/draft'})
+        self.assertEqual(rendered['resolved']['speculative-config']['model'], '/hf-cache/draft')
+        self.assertEqual(rendered['command'], ['--config', '/release/vllm.yaml'])
 
     def test_gemma_4_profile_pins_dgx_spark_multimodal_runtime(self):
         profile = lc.profiles.load(lc.ROOT, 'gemma-4-26b-a4b-nvfp4')

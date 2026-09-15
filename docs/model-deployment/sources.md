@@ -111,11 +111,12 @@ second assistant checkpoint must not bypass that integrity boundary.
 | M2 | [Pinned NVFP4 checkpoint configuration](https://huggingface.co/Inferact/Muse-Glimmer-30B-NVFP4-W4A4/blob/d35cb79050f419c457611b1cee5c5d15b176f285/config.json) | Architecture, native context, vision configuration and ModelOpt NVFP4 W4A4 metadata |
 | M3 | [Pinned generation configuration](https://huggingface.co/Inferact/Muse-Glimmer-30B-NVFP4-W4A4/blob/d35cb79050f419c457611b1cee5c5d15b176f285/generation_config.json) | Published token IDs and generation boundary |
 | M4 | [Original Muse Glimmer model card](https://huggingface.co/meta-models/Muse-Glimmer-30B) | Dense parameter count, image-text behavior and model provenance |
+| M5 | [Pinned Muse Glimmer assistant checkpoint](https://huggingface.co/meta-models/Muse-Glimmer-30B-assistant/tree/e8192f3a8f617f74be2ce220360c89ef4789f39f) | Immutable DFlash draft configuration and weights |
 
-The Hub revision was resolved on 2026-09-15. The recipe reports the NVFP4 checkpoint
+The target and assistant Hub revisions were resolved on 2026-09-15. The recipe reports the NVFP4 checkpoint
 as the 25.42 GB, Blackwell-only, single-DGX-Spark choice. That upstream support statement
-does not replace this repository's image probe, startup, multimodal, context, benchmark,
-soak or recovery qualification.
+does not replace this repository's image probe, startup, DFlash, multimodal, context,
+concurrency, benchmark, soak or recovery qualification.
 
 ## Mistral Small 4 sources
 

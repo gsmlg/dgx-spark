@@ -1,8 +1,8 @@
 # Muse Glimmer 30B NVFP4 on one DGX Spark
 
-**Date:** 2026-09-15  
+**Date:** 2026-09-16
 **Profile:** `muse-glimmer-30b-nvfp4`  
-**State:** Configured candidate; no target-host qualification has been performed for this profile.
+**State:** DFlash candidate deployed on the target host; health, generation, streaming and tool-call smoke passed. Context, benchmark, soak and recovery qualification remain pending.
 
 ## Artifact and runtime
 
@@ -26,10 +26,25 @@ actual start establishes GB10 ModelOpt kernel compatibility. [M1](../sources.md)
 
 ## Initial policy
 
-The configured target is 131,072 combined tokens and one scheduled request. The profile
-reserves 70% of unified GPU memory, enables chunked prefill and prefix caching, and uses
-the runtime's automatic BF16 KV-cache dtype. It does not enable speculative decoding.
-These are conservative starting settings, not measured capacity or throughput.
+The configured target is 131,072 combined tokens and up to 32 scheduled requests. The
+profile reserves 70% of unified GPU memory, enables chunked prefill and prefix caching,
+uses the V2 model runner, and leaves KV-cache dtype automatic. The
+70% memory reservation is the Spark-specific guardrail retained from the working
+baseline; it intentionally does not copy the generic recipe's more aggressive memory
+fraction. These are configured settings, not measured capacity or throughput.
+
+The vLLM 0.28.0 Rust frontend cannot be used for this profile: it does not register the
+`muse_glimmer` tool parser and reports automatic tool choice as unimplemented. This
+profile therefore retains the Python frontend so Muse reasoning and Codex tool calls
+remain functional. Re-evaluate Rust only after the pinned runtime exposes the same Muse
+parser contract.
+
+DFlash is enabled with 15 speculative tokens and the separately pinned
+`meta-models/Muse-Glimmer-30B-assistant` draft at commit
+`e8192f3a8f617f74be2ce220360c89ef4789f39f`. The lifecycle downloads and hashes both
+snapshots, rewrites the draft alias to its local immutable snapshot, and verifies both
+again before startup. The draft is a five-layer assistant head, not a standalone model,
+and must remain paired with this target checkpoint. [M1, M5](../sources.md)
 
 Both `--reasoning-parser muse_glimmer` and `--tool-call-parser muse_glimmer` are required
 because the model emits channel-scoped reasoning and ATEM-formatted tool calls. The
@@ -56,8 +71,9 @@ bin/spark-llm test --mode api
 ```
 
 Downloading and preparing do not stop the active model. Starting this profile does.
-Validation, preparation, health and smoke generation are not 131K or multimodal release
-acceptance. After the API suite passes, run the disruptive context, benchmark and soak
-modes and complete the manual recovery review before accepting the exact release. Record
-memory-floor, OOM, image-processing, parser, kernel and truncation failures instead of
-silently changing the context or precision.
+Validation, preparation, health and smoke generation are not 131K, 32-way concurrency,
+DFlash performance, or multimodal release acceptance. After the API suite passes, run
+the disruptive context, benchmark and soak modes and complete the manual recovery review
+before accepting the exact release. Record memory-floor, OOM, DFlash acceptance rate,
+image-processing, parser, kernel and truncation failures instead of silently changing
+the context, speculation, or precision.

@@ -8,7 +8,12 @@ reasoning-toggle: false
 reasoning-fields: [reasoning, reasoning_content]
 tool-support: true
 context-tokens: 131072
-max-running-requests: 1
-runtime-environment: {}
+max-running-requests: 32
+runtime-environment:
+  VLLM_USE_V2_MODEL_RUNNER: 1
 required-runtime-features: [muse_glimmer]
+auxiliary-models:
+  - name: muse-glimmer-draft
+    repository: meta-models/Muse-Glimmer-30B-assistant
+    revision: e8192f3a8f617f74be2ce220360c89ef4789f39f
 derived-cache: null

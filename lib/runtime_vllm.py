@@ -13,9 +13,9 @@ MODEL_KEYS = {'model', 'revision', 'tokenizer-revision', 'served-model-name',
               'generation-config', 'override-generation-config', 'enable-log-requests',
               'enable-log-outputs', 'disable-uvicorn-access-log', 'enforce-eager',
               'enable-flashinfer-autotune', 'load-format', 'attention-backend',
-              'diffusion-config'}
+              'diffusion-config', 'speculative-config'}
 OPTIONAL_KEYS = {'enable-flashinfer-autotune', 'enforce-eager', 'load-format',
-                 'attention-backend', 'diffusion-config'}
+                 'attention-backend', 'diffusion-config', 'speculative-config'}
 BOOL_KEYS = {'enable-chunked-prefill', 'enable-prefix-caching', 'language-model-only',
              'enable-auto-tool-choice', 'enable-log-requests', 'enable-log-outputs',
              'disable-uvicorn-access-log', 'enforce-eager'}
@@ -49,6 +49,17 @@ def validate(native, metadata):
         raise RuntimeError('Unsupported attention backend')
     if native.get('diffusion-config') not in (None, {'canvas_length': 256}):
         raise RuntimeError('Unsupported diffusion configuration')
+    speculative = native.get('speculative-config')
+    if speculative is not None:
+        if not isinstance(speculative, dict) or set(speculative) != {
+                'method', 'model', 'num_speculative_tokens'}:
+            raise RuntimeError('Invalid speculative decoding configuration')
+        if speculative['method'] != 'dflash' or type(speculative['num_speculative_tokens']) is not int \
+                or speculative['num_speculative_tokens'] <= 0:
+            raise RuntimeError('Unsupported speculative decoding configuration')
+        names = {model['name'] for model in metadata.get('auxiliary-models', [])}
+        if speculative['model'] not in names:
+            raise RuntimeError('Speculative model must reference a pinned auxiliary model')
     override = native['override-generation-config']
     if not isinstance(override, dict) or (
             'max_new_tokens' in override and override['max_new_tokens'] is not None):
@@ -85,11 +96,34 @@ def validate_help(help_text, native, metadata):
             raise RuntimeError(f'Candidate vLLM runtime does not provide {feature}')
 
 
-def render(native, snapshot, host, authenticated=False):
+def render(native, snapshot, host, authenticated=False, auxiliary_models=None,
+           rust_frontend=False):
     resolved = dict(native)
+    if 'speculative-config' in resolved:
+        speculative = dict(resolved['speculative-config'])
+        try:
+            speculative['model'] = (auxiliary_models or {})[speculative['model']]
+        except KeyError as error:
+            raise RuntimeError('Pinned speculative model snapshot is unavailable') from error
+        resolved['speculative-config'] = speculative
     resolved.update({'model': snapshot, 'tokenizer': snapshot, 'host': host['BIND_HOST'],
                      'port': host['PORT'], 'shutdown-timeout': host['SHUTDOWN_TIMEOUT']})
+    command = ['--config', '/release/vllm.yaml']
+    if rust_frontend:
+        # vllm-rs 0.28 requires MODEL immediately after `serve` and does not
+        # implement --config. Unknown engine flags are forwarded to Python.
+        command = [snapshot]
+        for key, value in resolved.items():
+            if key in ('model', 'tokenizer', 'tokenizer-revision') or value is False or value is None:
+                continue
+            flag = '--' + key
+            if value is True:
+                command.append(flag)
+            else:
+                if isinstance(value, (dict, list)):
+                    value = json.dumps(value, separators=(',', ':'))
+                command.extend([flag, str(value)])
     return {'config_name': 'vllm.yaml', 'config_text': yaml.safe_dump(resolved, sort_keys=False),
-            'entrypoint': ['vllm', 'serve'], 'command': ['--config', '/release/vllm.yaml'],
+            'entrypoint': ['vllm', 'serve'], 'command': command,
             'resolved': resolved,
             'environment': {'VLLM_API_KEY': '${VLLM_API_KEY:-}', 'VLLM_CACHE_ROOT': '/runtime-cache/vllm'}}

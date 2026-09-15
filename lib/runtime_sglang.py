@@ -71,7 +71,8 @@ def validate_help(help_text, native, metadata):
         raise RuntimeError('Candidate SGLang runtime does not support API authentication')
 
 
-def render(native, snapshot, host, authenticated=False):
+def render(native, snapshot, host, authenticated=False, auxiliary_models=None,
+           rust_frontend=False):
     resolved = dict(native)
     resolved['model-path'] = snapshot
     resolved.update({'host': host['BIND_HOST'], 'port': host['PORT']})

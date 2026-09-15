@@ -12,8 +12,9 @@ PROFILE_KEYS = {
     'context-tokens', 'max-running-requests', 'runtime-environment',
     'required-runtime-features', 'derived-cache',
 }
-OPTIONAL_PROFILE_KEYS = {'auxiliary-artifacts', 'reasoning-control'}
+OPTIONAL_PROFILE_KEYS = {'auxiliary-artifacts', 'auxiliary-models', 'reasoning-control'}
 AUXILIARY_ARTIFACT_KEYS = {'name', 'url', 'sha256'}
+AUXILIARY_MODEL_KEYS = {'name', 'repository', 'revision'}
 DERIVED_CACHE_KEYS = {'kind', 'mount', 'minimum-free-gib', 'reset-before-start'}
 ENGINES = {'vllm': 'vllm.yaml', 'sglang': 'sglang.yaml'}
 RUNTIME_ENV_KEYS = {'MAX_JOBS', 'CUTE_DSL_ARCH', 'PYTORCH_CUDA_ALLOC_CONF',
@@ -107,6 +108,22 @@ def load(root, profile_id=DEFAULT_PROFILE):
             raise RuntimeError('Auxiliary artifact URL must use HTTPS')
         if not re.fullmatch(r'[0-9a-f]{64}', artifact['sha256'] or ''):
             raise RuntimeError('Auxiliary artifact SHA256 must be lowercase hexadecimal')
+    auxiliary_models = metadata.get('auxiliary-models', [])
+    if not isinstance(auxiliary_models, list):
+        raise RuntimeError('auxiliary-models must be a list')
+    names = set()
+    for model in auxiliary_models:
+        if not isinstance(model, dict) or set(model) != AUXILIARY_MODEL_KEYS:
+            raise RuntimeError('Invalid auxiliary model')
+        if not re.fullmatch(r'[a-z0-9][a-z0-9._-]{0,63}', model['name'] or ''):
+            raise RuntimeError('Invalid auxiliary model name')
+        if model['name'] in names:
+            raise RuntimeError('Duplicate auxiliary model name')
+        names.add(model['name'])
+        if not re.fullmatch(r'[A-Za-z0-9._-]+/[A-Za-z0-9._-]+', model['repository'] or ''):
+            raise RuntimeError('Invalid auxiliary model repository')
+        if not re.fullmatch(r'[0-9a-f]{40}', str(model['revision'])):
+            raise RuntimeError('Auxiliary model revision must be a full 40-character commit')
     derived = metadata['derived-cache']
     if derived is not None:
         if not isinstance(derived, dict) or set(derived) != DERIVED_CACHE_KEYS:

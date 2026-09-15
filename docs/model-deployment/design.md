@@ -124,4 +124,4 @@ Unknown media requests must be rejected for these text-only profiles. Native Qwe
 
 ## 10. Rollout
 
-Deliver the profile/state/test refactor first, Laguna baseline second, SGLang/PLE integration third and Flash-Next baseline fourth. Defer DFlash, MTP, larger contexts and more concurrency until each non-speculative baseline is measured. No speed, memory-fit, 256K or million-token claim is established by documentation alone.
+Deliver the profile/state/test refactor first, Laguna baseline second, SGLang/PLE integration third and Flash-Next baseline fourth. DFlash is now an explicit, independently pinned Muse candidate; its memory fit, throughput, quality and concurrency still require exact-release measurement. Defer other speculative modes and larger contexts until their baselines are measured. No speed, memory-fit, 256K or million-token claim is established by documentation alone.

@@ -292,9 +292,7 @@ def pull_image(image):
     return digests[0], inspect['Config'].get('Entrypoint')
 
 
-def download_artifacts(host, secrets, profile, pinned):
-    adapter = ADAPTERS[profile['engine']]
-    repository, revision = adapter.repository(profile['native'])
+def download_model_artifacts(host, secrets, pinned, repository, revision, kind='primary'):
     print(f'Downloading and hashing {repository}@{revision}...', flush=True)
     env = os.environ.copy()
     env['HF_TOKEN'] = secrets.get('HF_TOKEN', '')
@@ -303,12 +301,42 @@ def download_artifacts(host, secrets, profile, pinned):
                       '--mount', f'type=bind,src={ROOT / "lib/prepare_model.py"},dst=/prepare.py,readonly',
                       '--mount', f'type=bind,src={ROOT / "lib/artifact_layout.py"},dst=/artifact_layout.py,readonly',
                       '-e', 'HF_TOKEN', '-e', 'HTTP_PROXY', '-e', 'HTTPS_PROXY', '-e', 'NO_PROXY',
-                      pinned, '/prepare.py', repository, revision], env=env)
+                      pinned, '/prepare.py', repository, revision, kind], env=env)
     marker = next((s.removeprefix('SPARK_MANIFEST=') for s in downloaded.splitlines()
                    if s.startswith('SPARK_MANIFEST=')), None)
     if marker is None:
         fail('Artifact verification did not return a manifest')
     return json.loads(marker)
+
+
+def download_artifacts(host, secrets, profile, pinned):
+    adapter = ADAPTERS[profile['engine']]
+    repository, revision = adapter.repository(profile['native'])
+    artifacts = download_model_artifacts(host, secrets, pinned, repository, revision)
+    artifacts['auxiliary_models'] = []
+    for model in profile['metadata'].get('auxiliary-models', []):
+        manifest = download_model_artifacts(
+            host, secrets, pinned, model['repository'], model['revision'], 'auxiliary')
+        artifacts['auxiliary_models'].append({**model, **manifest})
+    return artifacts
+
+
+def local_manifest(host, manifest):
+    try:
+        relative = Path(manifest['snapshot']).relative_to('/hf-cache')
+        snapshot = Path(host['HF_CACHE']) / relative
+        entries = manifest['files']
+    except (KeyError, TypeError, ValueError):
+        fail('Downloaded-model manifest is invalid')
+    if not isinstance(entries, list):
+        fail('Downloaded-model manifest is invalid')
+    return snapshot, entries
+
+
+def manifest_available(host, manifest):
+    snapshot, entries = local_manifest(host, manifest)
+    return all((snapshot / entry['path']).is_file() and
+               (snapshot / entry['path']).stat().st_size == entry['size'] for entry in entries)
 
 
 def downloaded_artifacts(host, profile):
@@ -324,15 +352,16 @@ def downloaded_artifacts(host, profile):
             payload.get('revision') != revision:
         return None
     artifacts = payload.get('artifacts')
-    try:
-        relative = Path(artifacts['snapshot']).relative_to('/hf-cache')
-        snapshot = Path(host['HF_CACHE']) / relative
-        entries = artifacts['files']
-    except (KeyError, TypeError, ValueError):
-        fail('Downloaded-model manifest is invalid')
-    for entry in entries:
-        item = snapshot / entry['path']
-        if not item.is_file() or item.stat().st_size != entry['size']:
+    if not manifest_available(host, artifacts):
+        return None
+    expected = profile['metadata'].get('auxiliary-models', [])
+    auxiliary = artifacts.get('auxiliary_models', [])
+    if not isinstance(auxiliary, list) or len(auxiliary) != len(expected):
+        return None
+    for wanted, manifest in zip(expected, auxiliary):
+        if any(manifest.get(key) != wanted[key] for key in ('name', 'repository', 'revision')):
+            return None
+        if not manifest_available(host, manifest):
             return None
     return artifacts
 
@@ -389,7 +418,8 @@ def download(host, secrets, profile, image):
                'artifacts': artifacts, 'downloaded_at': time.time(), 'downloader_image': pinned}
     atomic(STATE / 'downloaded' / f'{metadata["id"]}.json',
            {'payload': payload, 'sha256': digest_object(payload)})
-    total = sum(entry['size'] for entry in artifacts['files'])
+    total = sum(entry['size'] for entry in artifacts['files']) + sum(
+        entry['size'] for model in artifacts.get('auxiliary_models', []) for entry in model['files'])
     print(f'Downloaded {metadata["id"]}: {total / 2**30:.1f} GiB verified at {artifacts["snapshot"]}.')
     return artifacts
 
@@ -416,8 +446,13 @@ def prepare(host, secrets, profile, image):
         print(f'Using verified pre-downloaded snapshot for {metadata["id"]}.', flush=True)
     else:
         artifacts = download_artifacts(host, secrets, profile, pinned)
+    auxiliary_models = {item['name']: item['snapshot']
+                        for item in artifacts.get('auxiliary_models', [])}
     runtime_render = adapter.render(model, artifacts['snapshot'], host,
-                                    authenticated=bool(secrets.get('VLLM_API_KEY')))
+                                    authenticated=bool(secrets.get('VLLM_API_KEY')),
+                                    auxiliary_models=auxiliary_models,
+                                    rust_frontend=bool(
+                                        metadata['runtime-environment'].get('VLLM_USE_RUST_FRONTEND')))
     config_text = runtime_render['config_text']
     compose_text = render_compose(runtime_render, metadata)
     repository, revision = adapter.repository(model)
@@ -589,11 +624,13 @@ def launch(release_id, secrets):
     # Offline Docker verification: never pull during start.
     run(['docker', 'image', 'inspect', rec['identity']['image']])
     verify_auxiliary_artifacts(rec)
-    snapshot = Path(rec['identity']['host']['HF_CACHE']) / Path(rec['artifacts']['snapshot']).relative_to('/hf-cache')
-    for entry in rec['artifacts']['files']:
-        item = snapshot / entry['path']
-        if not item.is_file() or item.stat().st_size != entry['size']:
-            fail(f'Prepared artifact missing/incomplete: {entry["path"]}; rerun prepare')
+    manifests = [rec['artifacts'], *rec['artifacts'].get('auxiliary_models', [])]
+    for manifest in manifests:
+        snapshot, entries = local_manifest(rec['identity']['host'], manifest)
+        for entry in entries:
+            item = snapshot / entry['path']
+            if not item.is_file() or item.stat().st_size != entry['size']:
+                fail(f'Prepared artifact missing/incomplete: {entry["path"]}; rerun prepare')
     compose(release_id, secrets, 'up', '-d', '--force-recreate', '--pull', 'never', capture=False)
     wait_ready(release_id, secrets)
     wait_for_swap_quiet(rec)
@@ -602,7 +639,7 @@ def launch(release_id, secrets):
     for row in containers():
         output = subprocess.run(['docker', 'logs', row['Id']], capture_output=True, text=True)
         for line in (output.stdout + output.stderr).splitlines():
-            if re.search(r'backend|cache dtype|mamba|quantization|GPU KV cache|Maximum concurrency|Available KV cache', line, re.I):
+            if re.search(r'backend|cache dtype|mamba|quantization|GPU KV cache|Maximum concurrency|Available KV cache|speculative|dflash|draft model', line, re.I):
                 for value in secrets.values():
                     if value:
                         line = line.replace(value, '[REDACTED]')
@@ -638,6 +675,7 @@ def reset_derived_cache(rec):
 
 def replace(release_id, secrets):
     old = state()
+    owned_running = any(row['State']['Running'] for row in containers())
     if old['active'] == release_id and old['running']:
         wait_ready(release_id, secrets)
         test_release(release_id, secrets, 'smoke')
@@ -654,14 +692,25 @@ def replace(release_id, secrets):
         fail('Conflicting GPU containers: ' + ', '.join(busy))
     stop(old['active'], secrets)
     atomic(STATE / 'active.json', old | {'running': False})
-    fallback = old['accepted'] or (old['active'] if old['running'] else None)
+    # A previous rollback can restore a healthy container but fail a
+    # non-deterministic smoke assertion before updating active.json.
+    fallback = old['accepted'] or (old['active'] if old['running'] or owned_running else None)
     if fallback == release_id:
         fallback = None
     try:
         launch(release_id, secrets)
     except Exception as error:
+        candidate_logs = []
+        for row in containers():
+            output = subprocess.run(['docker', 'logs', '--tail', '500', row['Id']],
+                                    capture_output=True, text=True)
+            candidate_logs.extend((output.stdout + output.stderr).splitlines())
+        for value in secrets.values():
+            if value:
+                candidate_logs = [line.replace(value, '[REDACTED]') for line in candidate_logs]
         atomic(ROOT / 'reports/last-failure.json', {'time': time.time(), 'candidate': release_id,
-               'error': str(error), 'rollback_target': fallback})
+               'error': str(error), 'rollback_target': fallback,
+               'candidate_logs': candidate_logs})
         stop(release_id, secrets)
         if fallback:
             launch(fallback, secrets)

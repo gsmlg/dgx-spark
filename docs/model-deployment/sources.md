@@ -1,6 +1,6 @@
 # Sources and verification boundaries
 
-**Reviewed:** 2026-09-10. Sources are primary project/model documentation and repository code. Upstream pages are mutable; re-resolve revisions before implementation. Short identifiers below are citation keys used throughout this package.
+**Reviewed:** 2026-09-14. Sources are primary project/model documentation and repository code. Upstream pages are mutable; re-resolve revisions before implementation. Short identifiers below are citation keys used throughout this package.
 
 ## Repository evidence
 
@@ -16,7 +16,7 @@ The GitHub recursive tree endpoint reported tree identity `21ea8fe0f483be4e23b2d
 | R6 | [Current Qwen profile](https://github.com/gsmlg/dgx-spark/blob/main/profiles/qwen38-27b-nvfp4/vllm.yaml) | Existing context, parser and sampling assumptions |
 | R7 | [Original design](https://github.com/gsmlg/dgx-spark/blob/main/DESIGN.md) | v1 scope, host safety margin and architecture to preserve |
 
-The repository was reviewed remotely. No local checkout tests or GPU qualification were run during this documentation task.
+The original repository review was remote. The Laguna XS integration has local configuration and unit-test evidence, but no model download or GPU qualification.
 
 ## Laguna sources
 
@@ -30,6 +30,14 @@ The repository was reviewed remotely. No local checkout tests or GPU qualificati
 **Conflict to resolve:** the NVFP4 card's approximate size and Spark recipe numbers should not be applied blindly to the current file listing. The card says weights changed. Inspect the selected full revision, weight index and actual loader allocation. No claim is made that 99.7 GB of repository files equals 99.7 GB of GPU-resident weights.
 
 **Caution:** the model repository has revised its SGLang guidance. The proposed route remains vLLM to reuse the existing runtime; that choice is not a claim that current SGLang cannot run Laguna. Verify exact quantization and runtime compatibility rather than infer it from general architecture support.
+
+## Laguna XS sources
+
+| Key | Source | Used for |
+|---|---|---|
+| X1 | [Poolside Laguna XS 2.1 NVFP4 model card](https://huggingface.co/poolside/Laguna-XS-2.1-NVFP4) | Model identity, runtime minimums, quantization, parsers and reasoning behavior |
+| X2 | [Pinned checkpoint configuration](https://huggingface.co/poolside/Laguna-XS-2.1-NVFP4/blob/d32afde8b09af1539b49ff96ff5551c674485f8e/config.json) | Native context, architecture and quantization metadata |
+| X3 | [Pinned generation configuration](https://huggingface.co/poolside/Laguna-XS-2.1-NVFP4/blob/d32afde8b09af1539b49ff96ff5551c674485f8e/generation_config.json) | Sampling, reasoning and parser defaults |
 
 ## Flash-Next sources
 

@@ -1,12 +1,13 @@
 # Spark LLM
 
 One native ARM64 inference service, exposed as `local-assistant`, with safe switching
-between three model profiles. Only one model is resident at a time.
+between four model profiles. Only one model is resident at a time.
 
 | Profile | Engine | Checkpoint | Initial combined context |
 |---|---|---|---:|
 | `qwen38-27b-nvfp4` (default) | vLLM | `Inferact/Qwen3.8-27B-NVFP4` | 262,144 |
 | `laguna-s-2.1-nvfp4` | vLLM | `poolside/Laguna-S-2.1-NVFP4` | 5,120 |
+| `laguna-xs-2.1-nvfp4` | vLLM | `poolside/Laguna-XS-2.1-NVFP4` | 262,144 |
 | `qwen38-flash-next-nvfp4` | SGLang | `nvidia/Qwen3.8-Flash-Next-NVFP4` | 32,768 |
 
 **Configured capacity is not qualified capacity.** Check status and reports for actual results.
@@ -110,6 +111,11 @@ bin/spark-llm validate --profile laguna-s-2.1-nvfp4
 bin/spark-llm download --profile laguna-s-2.1-nvfp4
 bin/spark-llm prepare --profile laguna-s-2.1-nvfp4
 bin/spark-llm start --profile laguna-s-2.1-nvfp4
+
+# Prepare and switch to the smaller Laguna XS candidate.
+bin/spark-llm download --profile laguna-xs-2.1-nvfp4
+bin/spark-llm prepare --profile laguna-xs-2.1-nvfp4
+bin/spark-llm start --profile laguna-xs-2.1-nvfp4
 
 # Switch to Flash-Next after preparing its SGLang image, checkpoint, and PLE data.
 bin/spark-llm download --profile qwen38-flash-next-nvfp4

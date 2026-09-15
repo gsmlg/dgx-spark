@@ -1,0 +1,16 @@
+schema-version: 1
+id: laguna-xs-2.1-nvfp4
+engine: vllm
+display-name: Laguna XS 2.1 NVFP4
+text-only: true
+reasoning-default: false
+reasoning-toggle: true
+reasoning-fields: [reasoning, reasoning_content]
+tool-support: true
+context-tokens: 262144
+max-running-requests: 1
+runtime-environment:
+  MAX_JOBS: 4
+  CUTE_DSL_ARCH: sm_121a
+required-runtime-features: [poolside_v1]
+derived-cache: null

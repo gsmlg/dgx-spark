@@ -17,13 +17,25 @@ class ConfigurationTests(unittest.TestCase):
         loaded = {row['id']: lc.profiles.load(lc.ROOT, row['id'])
                   for row in lc.profiles.list_profiles(lc.ROOT)}
         self.assertEqual(set(loaded), {'qwen38-27b-nvfp4', 'laguna-s-2.1-nvfp4',
-                                      'qwen38-flash-next-nvfp4'})
+                                      'laguna-xs-2.1-nvfp4', 'qwen38-flash-next-nvfp4'})
         host = {'BIND_HOST': '127.0.0.1', 'PORT': 8000, 'SHUTDOWN_TIMEOUT': 300}
         for profile in loaded.values():
             adapter = lc.ADAPTERS[profile['engine']]
             adapter.validate(profile['native'], profile['metadata'])
             rendered = adapter.render(profile['native'], '/hf-cache/snapshot', host)
             self.assertIn('local-assistant', rendered['resolved'].values())
+
+    def test_laguna_xs_profile_pins_native_context_and_parsers(self):
+        profile = lc.profiles.load(lc.ROOT, 'laguna-xs-2.1-nvfp4')
+        native = profile['native']
+        self.assertEqual(native['model'], 'poolside/Laguna-XS-2.1-NVFP4')
+        self.assertEqual(native['revision'], 'd32afde8b09af1539b49ff96ff5551c674485f8e')
+        self.assertEqual(native['max-model-len'], 262144)
+        self.assertEqual(native['kv-cache-dtype'], 'fp8_e4m3')
+        self.assertEqual(native['reasoning-parser'], 'poolside_v1')
+        self.assertEqual(native['tool-call-parser'], 'poolside_v1')
+        self.assertFalse(profile['metadata']['reasoning-default'])
+        self.assertNotIn('speculative-config', native)
 
     def test_profile_resolution_rejects_traversal_and_unknown_ids(self):
         for profile_id in ('../../etc', 'missing-profile', '/tmp'):

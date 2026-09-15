@@ -11,9 +11,38 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
 import lifecycle as lc
+from artifact_layout import validate_artifact_layout
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_artifact_layout_accepts_transformers_and_native_mistral(self):
+        layouts = [
+            ({'config.json', 'tokenizer_config.json', 'tokenizer.json',
+              'model.safetensors.index.json'}, 'model.safetensors.index.json'),
+            ({'params.json', 'tokenizer_config.json', 'tokenizer.json', 'tekken.json',
+              'chat_template.jinja', 'consolidated.safetensors.index.json'},
+             'consolidated.safetensors.index.json'),
+        ]
+        for required, index_name in layouts:
+            with self.subTest(index=index_name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                shard = 'weights-00001.safetensors'
+                for name in required - {index_name}:
+                    (root / name).write_text('{}')
+                (root / shard).write_bytes(b'weights')
+                (root / index_name).write_text(json.dumps({'weight_map': {'layer': shard}}))
+                validate_artifact_layout(root, required | {shard}, 'primary')
+
+    def test_artifact_layout_rejects_incomplete_native_mistral_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = {'params.json', 'tokenizer_config.json', 'tokenizer.json',
+                     'consolidated.safetensors.index.json', 'weights.safetensors'}
+            for name in paths:
+                (root / name).write_text('{}')
+            with self.assertRaisesRegex(RuntimeError, 'model/tokenizer artifacts'):
+                validate_artifact_layout(root, paths, 'primary')
+
     def test_all_repository_profiles_are_strict_and_renderable(self):
         loaded = {row['id']: lc.profiles.load(lc.ROOT, row['id'])
                   for row in lc.profiles.list_profiles(lc.ROOT)}

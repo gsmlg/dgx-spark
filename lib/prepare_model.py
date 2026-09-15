@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 
 from huggingface_hub import HfApi, snapshot_download
+from artifact_layout import validate_artifact_layout
 
 repo, revision = sys.argv[1:3]
 api = HfApi(token=os.environ.get('HF_TOKEN') or False)
@@ -31,10 +32,6 @@ for entry in info.siblings:
     elif git.hexdigest() != entry.blob_id:
         raise RuntimeError(f'Git blob mismatch: {entry.rfilename}')
     manifest.append({'path': entry.rfilename, 'size': entry.size, 'sha256': sha.hexdigest()})
-required = {'config.json', 'tokenizer_config.json', 'tokenizer.json', 'model.safetensors.index.json'}
-if not required.issubset({x['path'] for x in manifest}):
-    raise RuntimeError('Required model/tokenizer artifacts missing')
-index = json.loads((root / 'model.safetensors.index.json').read_text())
-if not all((root / name).is_file() for name in set(index['weight_map'].values())):
-    raise RuntimeError('Weight index references missing shards')
+paths = {x['path'] for x in manifest}
+validate_artifact_layout(root, paths, 'primary')
 print('SPARK_MANIFEST=' + json.dumps({'snapshot': str(root), 'files': manifest}))

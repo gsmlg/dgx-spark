@@ -301,6 +301,7 @@ def download_artifacts(host, secrets, profile, pinned):
     downloaded = run(['docker', 'run', '--rm', '--network', 'host', '--entrypoint', 'python3',
                       '--mount', f'type=bind,src={host["HF_CACHE"]},dst=/hf-cache',
                       '--mount', f'type=bind,src={ROOT / "lib/prepare_model.py"},dst=/prepare.py,readonly',
+                      '--mount', f'type=bind,src={ROOT / "lib/artifact_layout.py"},dst=/artifact_layout.py,readonly',
                       '-e', 'HF_TOKEN', '-e', 'HTTP_PROXY', '-e', 'HTTPS_PROXY', '-e', 'NO_PROXY',
                       pinned, '/prepare.py', repository, revision], env=env)
     marker = next((s.removeprefix('SPARK_MANIFEST=') for s in downloaded.splitlines()

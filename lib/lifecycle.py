@@ -336,6 +336,48 @@ def downloaded_artifacts(host, profile):
     return artifacts
 
 
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def ensure_auxiliary_artifacts(cache_path, metadata):
+    artifacts = metadata.get('auxiliary-artifacts', [])
+    if not artifacts:
+        return
+    target_dir = cache_path / 'auxiliary'
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for artifact in artifacts:
+        target = target_dir / artifact['name']
+        if target.is_file() and file_sha256(target) == artifact['sha256']:
+            continue
+        fd, temporary_name = tempfile.mkstemp(dir=target_dir, prefix='.download-')
+        try:
+            with os.fdopen(fd, 'wb') as output:
+                with urllib.request.urlopen(artifact['url'], timeout=120) as response:
+                    shutil.copyfileobj(response, output)
+                    output.flush()
+                    os.fsync(output.fileno())
+            temporary = Path(temporary_name)
+            if file_sha256(temporary) != artifact['sha256']:
+                fail(f'Auxiliary artifact hash mismatch: {artifact["name"]}')
+            os.replace(temporary, target)
+        finally:
+            if os.path.exists(temporary_name):
+                os.unlink(temporary_name)
+
+
+def verify_auxiliary_artifacts(rec):
+    cache_path = Path(rec['compose_env']['RUNTIME_CACHE_DIR']) / 'auxiliary'
+    for artifact in rec['identity'].get('profile_policy', {}).get('auxiliary-artifacts', []):
+        target = cache_path / artifact['name']
+        if not target.is_file() or file_sha256(target) != artifact['sha256']:
+            fail(f'Prepared auxiliary artifact missing or invalid: {artifact["name"]}; rerun prepare')
+
+
 def download(host, secrets, profile, image):
     metadata = profile['metadata']
     check_disk_capacity(host, metadata)
@@ -390,6 +432,7 @@ def prepare(host, secrets, profile, image):
     cache_path = Path(host['RUNTIME_CACHE']) / profile['engine'] / digest_object(
         {'image': pinned, 'config': runtime_render['resolved']})[:24]
     cache_path.mkdir(parents=True, exist_ok=True)
+    ensure_auxiliary_artifacts(cache_path, metadata)
     compose_env = {'IMAGE': pinned, 'HF_CACHE': host['HF_CACHE'],
                    'RUNTIME_CACHE_DIR': str(cache_path), 'HEALTH_HOST': host['BIND_HOST'],
                    **{k: host[k] for k in ('PORT', 'HEALTH_TIMEOUT', 'STARTUP_TIMEOUT', 'STOP_GRACE_SECONDS')}}
@@ -544,6 +587,7 @@ def launch(release_id, secrets):
     reset_derived_cache(rec)
     # Offline Docker verification: never pull during start.
     run(['docker', 'image', 'inspect', rec['identity']['image']])
+    verify_auxiliary_artifacts(rec)
     snapshot = Path(rec['identity']['host']['HF_CACHE']) / Path(rec['artifacts']['snapshot']).relative_to('/hf-cache')
     for entry in rec['artifacts']['files']:
         item = snapshot / entry['path']

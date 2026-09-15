@@ -1,5 +1,6 @@
 """Focused checks for configuration safety and immutable release handling."""
 import contextlib
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -50,7 +51,13 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(native['tool-call-parser'], 'openai')
         self.assertTrue(profile['metadata']['reasoning-default'])
         self.assertFalse(profile['metadata']['reasoning-toggle'])
-        self.assertFalse(native['enable-prefix-caching'])
+        self.assertTrue(native['enable-prefix-caching'])
+        self.assertEqual(profile['metadata']['runtime-environment']['TIKTOKEN_ENCODINGS_BASE'],
+                         '/runtime-cache/auxiliary')
+        artifact = profile['metadata']['auxiliary-artifacts'][0]
+        self.assertEqual(artifact['name'], 'o200k_base.tiktoken')
+        self.assertEqual(artifact['sha256'],
+                         '446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d')
 
     def test_profile_resolution_rejects_traversal_and_unknown_ids(self):
         for profile_id in ('../../etc', 'missing-profile', '/tmp'):
@@ -86,6 +93,24 @@ class ConfigurationTests(unittest.TestCase):
                 lc.reset_derived_cache(rec)
             self.assertFalse((path / 'table.bin').exists())
             self.assertTrue((path / '.owner.json').exists())
+
+    def test_auxiliary_artifact_is_hash_verified_from_runtime_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / 'auxiliary' / 'vocab.tiktoken'
+            target.parent.mkdir()
+            target.write_bytes(b'pinned-vocab')
+            sha256 = hashlib.sha256(b'pinned-vocab').hexdigest()
+            metadata = {'auxiliary-artifacts': [{
+                'name': 'vocab.tiktoken', 'url': 'https://invalid.example/vocab',
+                'sha256': sha256}]}
+            lc.ensure_auxiliary_artifacts(root, metadata)
+            rec = {'compose_env': {'RUNTIME_CACHE_DIR': str(root)},
+                   'identity': {'profile_policy': metadata}}
+            lc.verify_auxiliary_artifacts(rec)
+            target.write_bytes(b'tampered')
+            with self.assertRaisesRegex(RuntimeError, 'missing or invalid'):
+                lc.verify_auxiliary_artifacts(rec)
 
     def test_env_is_data_and_rejects_unknown_duplicate_and_substitution(self):
         with tempfile.TemporaryDirectory() as directory:

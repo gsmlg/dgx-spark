@@ -67,6 +67,7 @@ PR #37068 was reported merged into `qwen4-main-squashed`, merge commit `3a09f089
 | G2 | [Pinned checkpoint configuration](https://huggingface.co/openai/gpt-oss-120b/blob/b5c939de8f754692c1647ca79fbf85e8c1e70f8a/config.json) | Architecture, native context and MXFP4 quantization metadata |
 | G3 | [Official vLLM GPT-OSS recipe](https://github.com/vllm-project/recipes/blob/main/OpenAI/GPT-OSS.md) | Parser, FP8 KV cache, scheduler and prefix-cache guidance |
 | G4 | [NVIDIA DGX Spark vLLM playbook](https://github.com/NVIDIA/dgx-spark-playbooks/blob/main/nvidia/vllm/README.md) | DGX Spark support listing for the OpenAI MXFP4 checkpoint |
+| G5 | [OpenAI Harmony encoding source](https://github.com/openai/harmony/blob/main/src/tiktoken_ext/public_encodings.rs) | Offline vocabulary filename, environment override and expected SHA256 |
 
 The full revision and runtime image digest remain separate pins. The checkpoint commit
 above was resolved from the Hub on the review date; `prepare` resolves and records the

@@ -15,7 +15,10 @@ tool use. [G1, G2](../sources.md)
 The candidate reuses the repository's `vllm/vllm-openai:v0.28.0` tag. Its installed
 runtime exposes GPT-OSS's `openai_gptoss` reasoning parser and the `openai` tool-call
 parser. `prepare` still must resolve the tag to an immutable Linux ARM64 digest, run
-the CUDA and CLI probes, and verify the pinned model snapshot before creating a release.
+the CUDA and CLI probes, verify the pinned model snapshot, and download and hash-check
+Harmony's `o200k_base.tiktoken` vocabulary before creating a release. The vocabulary is
+mounted from the release runtime cache through `TIKTOKEN_ENCODINGS_BASE`, so request
+rendering does not require network access.
 Only an actual start and qualification run establish GB10 kernel compatibility. [G3, G4](../sources.md)
 
 ## Initial policy
@@ -23,8 +26,8 @@ Only an actual start and qualification run establish GB10 kernel compatibility. 
 The configured combined context is the native 131,072-token limit with one scheduled
 request. This is a qualification target, not measured capacity. The profile reserves
 70% of unified GPU memory, enables chunked prefill, uses an FP8 E4M3 KV cache and a
-4,096-token scheduler batch cap. Prefix caching starts disabled, matching the vLLM
-GPT-OSS measurement recipe's consistency guidance. [G3](../sources.md)
+4,096-token scheduler batch cap. Prefix caching remains enabled for serving; benchmark
+runs must account for cache state when comparing releases. [G3](../sources.md)
 
 Reasoning is intrinsic to GPT-OSS rather than controlled by the other profiles'
 `enable_thinking` template switch. vLLM extracts reasoning with `openai_gptoss`;

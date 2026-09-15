@@ -12,10 +12,12 @@ PROFILE_KEYS = {
     'context-tokens', 'max-running-requests', 'runtime-environment',
     'required-runtime-features', 'derived-cache',
 }
+OPTIONAL_PROFILE_KEYS = {'auxiliary-artifacts'}
+AUXILIARY_ARTIFACT_KEYS = {'name', 'url', 'sha256'}
 DERIVED_CACHE_KEYS = {'kind', 'mount', 'minimum-free-gib', 'reset-before-start'}
 ENGINES = {'vllm': 'vllm.yaml', 'sglang': 'sglang.yaml'}
 RUNTIME_ENV_KEYS = {'MAX_JOBS', 'CUTE_DSL_ARCH', 'PYTORCH_CUDA_ALLOC_CONF',
-                    'SGLANG_QWEN4_PLE_FILE_RSS_BUDGET_GB'}
+                    'SGLANG_QWEN4_PLE_FILE_RSS_BUDGET_GB', 'TIKTOKEN_ENCODINGS_BASE'}
 
 
 class UniqueLoader(yaml.SafeLoader):
@@ -61,7 +63,7 @@ def resolve(root, profile_id=DEFAULT_PROFILE):
 def load(root, profile_id=DEFAULT_PROFILE):
     path = resolve(root, profile_id)
     metadata = _yaml(path / 'profile.yaml')
-    if set(metadata) != PROFILE_KEYS:
+    if set(metadata) - OPTIONAL_PROFILE_KEYS != PROFILE_KEYS or set(metadata) - PROFILE_KEYS - OPTIONAL_PROFILE_KEYS:
         raise RuntimeError('profile.yaml has missing or unknown settings')
     if metadata['schema-version'] != 1 or metadata['id'] != profile_id:
         raise RuntimeError('Profile schema version or ID does not match its directory')
@@ -88,6 +90,18 @@ def load(root, profile_id=DEFAULT_PROFILE):
     features = metadata['required-runtime-features']
     if not isinstance(features, list) or not all(isinstance(x, str) and x for x in features):
         raise RuntimeError('required-runtime-features must be a list of strings')
+    auxiliary = metadata.get('auxiliary-artifacts', [])
+    if not isinstance(auxiliary, list):
+        raise RuntimeError('auxiliary-artifacts must be a list')
+    for artifact in auxiliary:
+        if not isinstance(artifact, dict) or set(artifact) != AUXILIARY_ARTIFACT_KEYS:
+            raise RuntimeError('Invalid auxiliary artifact')
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', artifact['name'] or ''):
+            raise RuntimeError('Invalid auxiliary artifact name')
+        if not re.fullmatch(r'https://[^\s]+', artifact['url'] or ''):
+            raise RuntimeError('Auxiliary artifact URL must use HTTPS')
+        if not re.fullmatch(r'[0-9a-f]{64}', artifact['sha256'] or ''):
+            raise RuntimeError('Auxiliary artifact SHA256 must be lowercase hexadecimal')
     derived = metadata['derived-cache']
     if derived is not None:
         if not isinstance(derived, dict) or set(derived) != DERIVED_CACHE_KEYS:

@@ -1,0 +1,24 @@
+model: Inferact/Muse-Glimmer-30B-NVFP4-W4A4
+# Resolved from the Hub on 2026-09-15. Updates are explicit profile edits.
+revision: d35cb79050f419c457611b1cee5c5d15b176f285
+tokenizer-revision: d35cb79050f419c457611b1cee5c5d15b176f285
+served-model-name: local-assistant
+tensor-parallel-size: 1
+max-model-len: 131072
+max-num-seqs: 1
+gpu-memory-utilization: 0.70
+max-num-batched-tokens: 4096
+enable-chunked-prefill: true
+enable-prefix-caching: true
+dtype: auto
+kv-cache-dtype: auto
+language-model-only: false
+reasoning-parser: muse_glimmer
+tool-call-parser: muse_glimmer
+enable-auto-tool-choice: true
+default-chat-template-kwargs: {}
+generation-config: auto
+override-generation-config: {}
+enable-log-requests: false
+enable-log-outputs: false
+disable-uvicorn-access-log: true

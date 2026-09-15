@@ -37,8 +37,10 @@ def validate(native, metadata):
         raise RuntimeError('Invalid GPU allocation or tensor parallelism')
     if native['max-model-len'] != metadata['context-tokens'] or native['max-num-seqs'] != metadata['max-running-requests']:
         raise RuntimeError('Native context/concurrency does not match profile policy')
-    if not native['language-model-only'] or native['enable-log-requests'] or native['enable-log-outputs']:
-        raise RuntimeError('Text-only mode and disabled prompt/output logs are required')
+    if native['language-model-only'] != metadata['text-only']:
+        raise RuntimeError('Native language-only mode must match the profile input policy')
+    if native['enable-log-requests'] or native['enable-log-outputs']:
+        raise RuntimeError('Prompt and output logs must be disabled')
     if not isinstance(native['override-generation-config'], dict) or 'max_new_tokens' in native['override-generation-config']:
         raise RuntimeError('Invalid generation override configuration')
 

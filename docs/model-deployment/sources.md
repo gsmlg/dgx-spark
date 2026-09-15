@@ -74,6 +74,20 @@ above was resolved from the Hub on the review date; `prepare` resolves and recor
 actual ARM64 image digest. Source support statements do not replace GB10 startup,
 parser, long-context, throughput, soak or recovery qualification.
 
+## Muse Glimmer sources
+
+| Key | Source | Used for |
+|---|---|---|
+| M1 | [Official vLLM Muse Glimmer recipe](https://recipes.vllm.ai/meta-models/Muse-Glimmer-30B) | DGX Spark checkpoint choice, vLLM version, context, parsers, sampling and NVFP4 behavior |
+| M2 | [Pinned NVFP4 checkpoint configuration](https://huggingface.co/Inferact/Muse-Glimmer-30B-NVFP4-W4A4/blob/d35cb79050f419c457611b1cee5c5d15b176f285/config.json) | Architecture, native context, vision configuration and ModelOpt NVFP4 W4A4 metadata |
+| M3 | [Pinned generation configuration](https://huggingface.co/Inferact/Muse-Glimmer-30B-NVFP4-W4A4/blob/d35cb79050f419c457611b1cee5c5d15b176f285/generation_config.json) | Published token IDs and generation boundary |
+| M4 | [Original Muse Glimmer model card](https://huggingface.co/meta-models/Muse-Glimmer-30B) | Dense parameter count, image-text behavior and model provenance |
+
+The Hub revision was resolved on 2026-09-15. The recipe reports the NVFP4 checkpoint
+as the 25.42 GB, Blackwell-only, single-DGX-Spark choice. That upstream support statement
+does not replace this repository's image probe, startup, multimodal, context, benchmark,
+soak or recovery qualification.
+
 ## Hardware
 
 | Key | Source | Used for |

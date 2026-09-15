@@ -76,8 +76,6 @@ def load(root, profile_id=DEFAULT_PROFILE):
     for key in ('context-tokens', 'max-running-requests'):
         if type(metadata[key]) is not int or metadata[key] <= 0:
             raise RuntimeError(f'{key} must be a positive integer')
-    if not metadata['text-only']:
-        raise RuntimeError('Only text-only profiles are supported')
     if not isinstance(metadata['reasoning-fields'], list) or not metadata['reasoning-fields']:
         raise RuntimeError('reasoning-fields must be a non-empty list')
     if not all(re.fullmatch(r'[a-z_][a-z0-9_]*', x or '') for x in metadata['reasoning-fields']):

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Synthetic API/capacity tests. Never execute model-suggested tools."""
 import argparse
+import base64
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
@@ -8,12 +9,14 @@ import os
 from pathlib import Path
 import random
 import statistics
+import struct
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
 import uuid
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'lib'))
@@ -169,6 +172,21 @@ def response_text(message):
     return ''.join(str(message.get(key) or '') for key in ('content', 'reasoning', 'reasoning_content'))
 
 
+def image_data_url():
+    """Return a deterministic 32x32 red PNG without an external fixture dependency."""
+    width = height = 32
+    scanlines = b''.join(b'\x00' + b'\xff\x00\x00' * width for _ in range(height))
+
+    def chunk(kind, payload):
+        data = kind + payload
+        return struct.pack('>I', len(payload)) + data + struct.pack('>I', zlib.crc32(data))
+
+    png = (b'\x89PNG\r\n\x1a\n'
+           + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0))
+           + chunk(b'IDAT', zlib.compress(scanlines)) + chunk(b'IEND', b''))
+    return 'data:image/png;base64,' + base64.b64encode(png).decode()
+
+
 def smoke(c):
     models = c.json('/v1/models')['data']
     assert any(m['id'] == c.alias for m in models), 'Expected alias missing'
@@ -213,9 +231,14 @@ def api(c):
         assert '1813' in response_text(msg)
     c.expect_error(c.body(model='missing-model'), 'unknown-alias')
     c.expect_error({'model': c.alias, 'messages': 'invalid'}, 'malformed')
-    c.expect_error(c.body(messages=[{'role': 'user', 'content': [
-        {'type': 'text', 'text': 'Describe the image.'},
-        {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,iVBORw0KGgo='}}]}]), 'unsupported-media')
+    media_body = c.body(messages=[{'role': 'user', 'content': [
+        {'type': 'text', 'text': 'What is the dominant color in this image? Answer briefly.'},
+        {'type': 'image_url', 'image_url': {'url': image_data_url()}}]}], max_tokens=256)
+    if c.policy.get('text-only', True):
+        c.expect_error(media_body, 'unsupported-media')
+    else:
+        media = c.generate('image-input', media_body)
+        assert response_text(media['choices'][0]['message']), 'Multimodal response is empty'
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda i: c.generate(f'overlap-{i}'), range(2)))
     assert all(r['choices'][0]['message'].get('content') for r in results)

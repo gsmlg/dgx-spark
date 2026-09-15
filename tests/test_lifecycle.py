@@ -19,7 +19,7 @@ class ConfigurationTests(unittest.TestCase):
                   for row in lc.profiles.list_profiles(lc.ROOT)}
         self.assertEqual(set(loaded), {'qwen38-27b-nvfp4', 'laguna-s-2.1-nvfp4',
                                       'laguna-xs-2.1-nvfp4', 'qwen38-flash-next-nvfp4',
-                                      'gpt-oss-120b-mxfp4'})
+                                      'gpt-oss-120b-mxfp4', 'muse-glimmer-30b-nvfp4'})
         host = {'BIND_HOST': '127.0.0.1', 'PORT': 8000, 'SHUTDOWN_TIMEOUT': 300}
         for profile in loaded.values():
             adapter = lc.ADAPTERS[profile['engine']]
@@ -58,6 +58,22 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(artifact['name'], 'o200k_base.tiktoken')
         self.assertEqual(artifact['sha256'],
                          '446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d')
+
+    def test_muse_glimmer_profile_pins_multimodal_nvfp4_runtime(self):
+        profile = lc.profiles.load(lc.ROOT, 'muse-glimmer-30b-nvfp4')
+        native = profile['native']
+        self.assertEqual(native['model'], 'Inferact/Muse-Glimmer-30B-NVFP4-W4A4')
+        self.assertEqual(native['revision'], 'd35cb79050f419c457611b1cee5c5d15b176f285')
+        self.assertEqual(native['tokenizer-revision'], native['revision'])
+        self.assertEqual(native['max-model-len'], 131072)
+        self.assertEqual(native['kv-cache-dtype'], 'auto')
+        self.assertEqual(native['reasoning-parser'], 'muse_glimmer')
+        self.assertEqual(native['tool-call-parser'], 'muse_glimmer')
+        self.assertFalse(profile['metadata']['text-only'])
+        self.assertFalse(native['language-model-only'])
+        self.assertTrue(profile['metadata']['reasoning-default'])
+        self.assertFalse(profile['metadata']['reasoning-toggle'])
+        self.assertNotIn('speculative-config', native)
 
     def test_profile_resolution_rejects_traversal_and_unknown_ids(self):
         for profile_id in ('../../etc', 'missing-profile', '/tmp'):

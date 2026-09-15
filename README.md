@@ -1,7 +1,7 @@
 # Spark LLM
 
 One native ARM64 inference service, exposed as `local-assistant`, with safe switching
-between five model profiles. Only one model is resident at a time.
+between six model profiles. Only one model is resident at a time.
 
 | Profile | Engine | Checkpoint | Initial combined context |
 |---|---|---|---:|
@@ -9,6 +9,7 @@ between five model profiles. Only one model is resident at a time.
 | `laguna-s-2.1-nvfp4` | vLLM | `poolside/Laguna-S-2.1-NVFP4` | 5,120 |
 | `laguna-xs-2.1-nvfp4` | vLLM | `poolside/Laguna-XS-2.1-NVFP4` | 262,144 |
 | `gpt-oss-120b-mxfp4` | vLLM | `openai/gpt-oss-120b` | 131,072 |
+| `muse-glimmer-30b-nvfp4` | vLLM | `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` | 131,072 |
 | `qwen38-flash-next-nvfp4` | SGLang | `nvidia/Qwen3.8-Flash-Next-NVFP4` | 32,768 |
 
 **Configured capacity is not qualified capacity.** Check status and reports for actual results.
@@ -90,7 +91,9 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 
 Add an Authorization bearer header if a key is configured. Tools execute in your
 client, after inspecting the returned tool call. The service does not run tools.
-Only text input is supported. Responses API, embeddings and media are outside scope.
+All profiles except Muse Glimmer accept text input only. Muse Glimmer accepts text and
+image inputs through Chat Completions; video, Responses API and embeddings remain outside
+the qualified scope.
 
 Non-thinking is the server default: temperature 0.7, top-p 0.8, top-k 20,
 presence penalty 1.5, min-p 0, repetition penalty 1.0. To enable thinking, send
@@ -99,9 +102,10 @@ top-p 0.95, top-k 20 and presence penalty 0. API tests record the actual message
 field names in the pinned runtime; do not assume a specific reasoning field before
 those tests pass.
 
-GPT-OSS is the exception: reasoning is intrinsic rather than controlled by
-`enable_thinking`. Use its request-level reasoning-effort control and preserve the
-returned reasoning/tool history. See the model-specific guide before switching.
+GPT-OSS and Muse Glimmer are exceptions: reasoning is intrinsic rather than controlled by
+`enable_thinking`. Muse uses `reasoning_strength` (`low`, `medium`, `high`, or `xhigh`)
+in chat-template kwargs and should use temperature 1.0, top-p 0.95 and top-k 64. Preserve
+returned reasoning/tool history and see the model-specific guide before switching.
 
 Always specify `max_tokens`. The suggested client default is 4,096; it is not a
 server-wide output cap. For the 262,144-token profiles, a 16,384 output reservation is
@@ -127,6 +131,11 @@ bin/spark-llm start --profile laguna-xs-2.1-nvfp4
 bin/spark-llm download --profile gpt-oss-120b-mxfp4
 bin/spark-llm prepare --profile gpt-oss-120b-mxfp4
 bin/spark-llm start --profile gpt-oss-120b-mxfp4
+
+# Prepare and switch to multimodal Muse Glimmer 30B NVFP4.
+bin/spark-llm download --profile muse-glimmer-30b-nvfp4
+bin/spark-llm prepare --profile muse-glimmer-30b-nvfp4
+bin/spark-llm start --profile muse-glimmer-30b-nvfp4
 
 # Switch to Flash-Next after preparing its SGLang image, checkpoint, and PLE data.
 bin/spark-llm download --profile qwen38-flash-next-nvfp4

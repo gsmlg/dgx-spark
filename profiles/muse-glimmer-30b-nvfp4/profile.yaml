@@ -1,0 +1,14 @@
+schema-version: 1
+id: muse-glimmer-30b-nvfp4
+engine: vllm
+display-name: Muse Glimmer 30B NVFP4
+text-only: false
+reasoning-default: true
+reasoning-toggle: false
+reasoning-fields: [reasoning, reasoning_content]
+tool-support: true
+context-tokens: 131072
+max-running-requests: 1
+runtime-environment: {}
+required-runtime-features: [muse_glimmer]
+derived-cache: null

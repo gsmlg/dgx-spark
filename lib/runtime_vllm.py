@@ -83,8 +83,17 @@ def cuda_probe():
 
 
 def probe_command(pinned):
-    return ['docker', 'run', '--rm', '--gpus', 'all', '--entrypoint', 'vllm',
-            pinned, 'serve', '--help=all']
+    code = (
+        "import subprocess; "
+        "result=subprocess.run(['vllm','serve','--help=all'],check=True,text=True,"
+        "stdout=subprocess.PIPE); print(result.stdout); "
+        "from vllm.model_executor.model_loader import LoadFormats; "
+        "print('\\n'.join(LoadFormats.__args__)); "
+        "from vllm.v1.attention.backends.registry import AttentionBackendEnum; "
+        "print('\\n'.join(item.name for item in AttentionBackendEnum))"
+    )
+    return ['docker', 'run', '--rm', '--gpus', 'all', '--entrypoint', 'python3',
+            pinned, '-c', code]
 
 
 def validate_help(help_text, native, metadata):

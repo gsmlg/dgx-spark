@@ -15,6 +15,21 @@ from artifact_layout import validate_artifact_layout
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_vllm_probe_includes_dynamic_attention_backend_registry(self):
+        command = lc.runtime_vllm.probe_command('image@sha256:digest')
+        self.assertEqual(command[6], 'python3')
+        self.assertIn('LoadFormats', command[-1])
+        self.assertIn('AttentionBackendEnum', command[-1])
+        help_text = '--attention-backend --host --port --shutdown-timeout\nfastsafetensors\nTRITON_MLA'
+        lc.runtime_vllm.validate_help(
+            help_text, {'attention-backend': 'TRITON_MLA'},
+            {'required-runtime-features': ['TRITON_MLA']})
+        with self.assertRaisesRegex(RuntimeError, 'does not provide TRITON_MLA'):
+            lc.runtime_vllm.validate_help(
+                help_text.replace('TRITON_MLA', ''),
+                {'attention-backend': 'TRITON_MLA'},
+                {'required-runtime-features': ['TRITON_MLA']})
+
     def test_artifact_layout_accepts_transformers_and_native_mistral(self):
         layouts = [
             ({'config.json', 'tokenizer_config.json', 'tokenizer.json',

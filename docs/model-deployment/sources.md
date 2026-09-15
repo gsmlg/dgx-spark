@@ -74,6 +74,35 @@ above was resolved from the Hub on the review date; `prepare` resolves and recor
 actual ARM64 image digest. Source support statements do not replace GB10 startup,
 parser, long-context, throughput, soak or recovery qualification.
 
+## DiffusionGemma sources
+
+| Key | Source | Used for |
+|---|---|---|
+| D1 | [Official vLLM DiffusionGemma recipe](https://recipes.vllm.ai/Google/diffusiongemma-26B-A4B-it) | NVIDIA checkpoint, DGX Spark overrides, diffusion canvas, parsers, multimodal behavior and limitations |
+| D2 | [Pinned NVIDIA NVFP4 checkpoint configuration](https://huggingface.co/nvidia/diffusiongemma-26B-A4B-it-NVFP4/blob/ec4ff3df205028f4e81c954c2227f9312b3ec2ea/config.json) | Architecture, native context and ModelOpt NVFP4 plus FP8 KV metadata |
+| D3 | [Pinned generation configuration](https://huggingface.co/nvidia/diffusiongemma-26B-A4B-it-NVFP4/blob/ec4ff3df205028f4e81c954c2227f9312b3ec2ea/generation_config.json) | Denoising thresholds, entropy sampler and the fixed output cap that the recipe clears |
+| D4 | [Original Google model card](https://huggingface.co/google/diffusiongemma-26B-A4B-it) | Model identity, block-diffusion behavior and provenance |
+
+The checkpoint revision and `vllm/vllm-openai:gemma` ARM64 manifest were resolved on
+2026-09-15. The image tag remains mutable until `prepare` records its registry digest.
+Recipe performance figures are upstream measurements, not qualification results for this
+repository or host.
+
+## Gemma 4 sources
+
+| Key | Source | Used for |
+|---|---|---|
+| E1 | [Official vLLM Gemma 4 recipe](https://recipes.vllm.ai/Google/gemma-4-26B-A4B-it) | DGX Spark image and scheduler policy, NVIDIA checkpoint, parsers, multimodal behavior and MTP boundary |
+| E2 | [Pinned NVIDIA NVFP4 checkpoint configuration](https://huggingface.co/nvidia/Gemma-4-26B-A4B-NVFP4/blob/a19cfe00be84568a6867111c9a68c9c44fdcffe6/config.json) | Architecture, 262K context and ModelOpt NVFP4 W4A4 metadata |
+| E3 | [Pinned generation configuration](https://huggingface.co/nvidia/Gemma-4-26B-A4B-NVFP4/blob/a19cfe00be84568a6867111c9a68c9c44fdcffe6/generation_config.json) | Published stochastic sampling defaults |
+| E4 | [Original Google model card](https://huggingface.co/google/gemma-4-26B-A4B-it) | Model identity, multimodal capabilities, reasoning and tool behavior |
+
+The Hub revision and the recipe image manifest were resolved on 2026-09-15. The recipe
+reports this checkpoint and ARM64 image as the tested single-DGX-Spark route. The image
+tag remains mutable until `prepare` records its registry digest. MTP is deliberately not
+configured because this lifecycle currently verifies one model snapshot per release; a
+second assistant checkpoint must not bypass that integrity boundary.
+
 ## Muse Glimmer sources
 
 | Key | Source | Used for |
@@ -87,6 +116,20 @@ The Hub revision was resolved on 2026-09-15. The recipe reports the NVFP4 checkp
 as the 25.42 GB, Blackwell-only, single-DGX-Spark choice. That upstream support statement
 does not replace this repository's image probe, startup, multimodal, context, benchmark,
 soak or recovery qualification.
+
+## Mistral Small 4 sources
+
+| Key | Source | Used for |
+|---|---|---|
+| MS1 | [Official NVFP4 model card](https://huggingface.co/mistralai/Mistral-Small-4-119B-2603-NVFP4) | Model identity, vLLM settings, context, multimodal behavior, parsers and reasoning control |
+| MS2 | [Pinned checkpoint parameters](https://huggingface.co/mistralai/Mistral-Small-4-119B-2603-NVFP4/blob/45331841b631f4e281df8e959ea3cc9beb84298a/params.json) | Architecture, context scaling, vision encoder and compressed-tensors NVFP4 metadata |
+| MS3 | [Pinned chat template](https://huggingface.co/mistralai/Mistral-Small-4-119B-2603-NVFP4/blob/45331841b631f4e281df8e959ea3cc9beb84298a/chat_template.jinja) | `reasoning_effort` values, image/tool history and default non-reasoning behavior |
+
+The Hub revision was resolved on 2026-09-15. The publisher's example uses two GPUs,
+128 sequences and a 16,384-token scheduler batch. This repository deliberately starts
+with TP1, one sequence and a 4,096-token batch for the single-GPU DGX Spark. That
+adaptation, the v0.28.0 ARM64 image, 262K capacity, parsers, multimodal path, memory
+headroom and performance all remain candidate settings until preparation and host tests.
 
 ## Hardware
 

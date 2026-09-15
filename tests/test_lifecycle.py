@@ -19,7 +19,10 @@ class ConfigurationTests(unittest.TestCase):
                   for row in lc.profiles.list_profiles(lc.ROOT)}
         self.assertEqual(set(loaded), {'qwen38-27b-nvfp4', 'laguna-s-2.1-nvfp4',
                                       'laguna-xs-2.1-nvfp4', 'qwen38-flash-next-nvfp4',
-                                      'gpt-oss-120b-mxfp4', 'muse-glimmer-30b-nvfp4'})
+                                      'gpt-oss-120b-mxfp4', 'muse-glimmer-30b-nvfp4',
+                                      'gemma-4-26b-a4b-nvfp4',
+                                      'mistral-small-4-119b-2603-nvfp4',
+                                      'diffusiongemma-26b-a4b-it-nvfp4'})
         host = {'BIND_HOST': '127.0.0.1', 'PORT': 8000, 'SHUTDOWN_TIMEOUT': 300}
         for profile in loaded.values():
             adapter = lc.ADAPTERS[profile['engine']]
@@ -74,6 +77,73 @@ class ConfigurationTests(unittest.TestCase):
         self.assertTrue(profile['metadata']['reasoning-default'])
         self.assertFalse(profile['metadata']['reasoning-toggle'])
         self.assertNotIn('speculative-config', native)
+
+    def test_gemma_4_profile_pins_dgx_spark_multimodal_runtime(self):
+        profile = lc.profiles.load(lc.ROOT, 'gemma-4-26b-a4b-nvfp4')
+        native = profile['native']
+        self.assertEqual(native['model'], 'nvidia/Gemma-4-26B-A4B-NVFP4')
+        self.assertEqual(native['revision'], 'a19cfe00be84568a6867111c9a68c9c44fdcffe6')
+        self.assertEqual(native['tokenizer-revision'], native['revision'])
+        self.assertEqual(native['max-model-len'], 262144)
+        self.assertEqual(native['max-num-seqs'], 8)
+        self.assertEqual(native['gpu-memory-utilization'], 0.80)
+        self.assertEqual(native['max-num-batched-tokens'], 8192)
+        self.assertEqual(native['load-format'], 'fastsafetensors')
+        self.assertEqual(native['reasoning-parser'], 'gemma4')
+        self.assertEqual(native['tool-call-parser'], 'gemma4')
+        self.assertFalse(profile['metadata']['text-only'])
+        self.assertFalse(native['language-model-only'])
+        self.assertFalse(profile['metadata']['reasoning-default'])
+        self.assertTrue(profile['metadata']['reasoning-toggle'])
+        self.assertEqual(profile['metadata']['runtime-environment']['VLLM_USE_RUST_FRONTEND'], 1)
+        self.assertEqual(profile['metadata']['runtime-environment']['VLLM_USE_V2_MODEL_RUNNER'], 1)
+        self.assertNotIn('speculative-config', native)
+        rendered = lc.runtime_vllm.render(native, '/hf-cache/snapshot',
+                                           {'BIND_HOST': '127.0.0.1', 'PORT': 8000,
+                                            'SHUTDOWN_TIMEOUT': 300})
+        self.assertEqual(rendered['entrypoint'], ['vllm', 'serve'])
+        lc.runtime_vllm.inspect_entrypoint(['/opt/nvidia/nvidia_entrypoint.sh'])
+        with self.assertRaises(RuntimeError):
+            lc.runtime_vllm.inspect_entrypoint(['/bin/sh'])
+
+    def test_mistral_small_4_profile_pins_multimodal_nvfp4_runtime(self):
+        profile = lc.profiles.load(lc.ROOT, 'mistral-small-4-119b-2603-nvfp4')
+        native = profile['native']
+        self.assertEqual(native['model'], 'mistralai/Mistral-Small-4-119B-2603-NVFP4')
+        self.assertEqual(native['revision'], '45331841b631f4e281df8e959ea3cc9beb84298a')
+        self.assertEqual(native['tokenizer-revision'], native['revision'])
+        self.assertEqual(native['max-model-len'], 262144)
+        self.assertEqual(native['max-num-seqs'], 1)
+        self.assertEqual(native['gpu-memory-utilization'], 0.80)
+        self.assertEqual(native['attention-backend'], 'TRITON_MLA')
+        self.assertEqual(native['reasoning-parser'], 'mistral')
+        self.assertEqual(native['tool-call-parser'], 'mistral')
+        self.assertFalse(profile['metadata']['text-only'])
+        self.assertFalse(native['language-model-only'])
+        self.assertFalse(profile['metadata']['reasoning-default'])
+        self.assertTrue(profile['metadata']['reasoning-toggle'])
+        self.assertEqual(profile['metadata']['reasoning-control'], 'reasoning-effort')
+        self.assertNotIn('speculative-config', native)
+
+    def test_diffusiongemma_profile_pins_dgx_spark_diffusion_runtime(self):
+        profile = lc.profiles.load(lc.ROOT, 'diffusiongemma-26b-a4b-it-nvfp4')
+        native = profile['native']
+        self.assertEqual(native['model'], 'nvidia/diffusiongemma-26B-A4B-it-NVFP4')
+        self.assertEqual(native['revision'], 'ec4ff3df205028f4e81c954c2227f9312b3ec2ea')
+        self.assertEqual(native['tokenizer-revision'], native['revision'])
+        self.assertEqual(native['max-model-len'], 262144)
+        self.assertEqual(native['max-num-seqs'], 8)
+        self.assertEqual(native['gpu-memory-utilization'], 0.80)
+        self.assertEqual(native['load-format'], 'fastsafetensors')
+        self.assertEqual(native['attention-backend'], 'TRITON_ATTN')
+        self.assertEqual(native['diffusion-config'], {'canvas_length': 256})
+        self.assertIsNone(native['override-generation-config']['max_new_tokens'])
+        self.assertEqual(native['reasoning-parser'], 'gemma4')
+        self.assertEqual(native['tool-call-parser'], 'gemma4')
+        self.assertFalse(profile['metadata']['text-only'])
+        self.assertFalse(native['language-model-only'])
+        self.assertTrue(profile['metadata']['reasoning-default'])
+        self.assertTrue(profile['metadata']['reasoning-toggle'])
 
     def test_profile_resolution_rejects_traversal_and_unknown_ids(self):
         for profile_id in ('../../etc', 'missing-profile', '/tmp'):

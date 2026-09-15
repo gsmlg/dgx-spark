@@ -12,12 +12,13 @@ PROFILE_KEYS = {
     'context-tokens', 'max-running-requests', 'runtime-environment',
     'required-runtime-features', 'derived-cache',
 }
-OPTIONAL_PROFILE_KEYS = {'auxiliary-artifacts'}
+OPTIONAL_PROFILE_KEYS = {'auxiliary-artifacts', 'reasoning-control'}
 AUXILIARY_ARTIFACT_KEYS = {'name', 'url', 'sha256'}
 DERIVED_CACHE_KEYS = {'kind', 'mount', 'minimum-free-gib', 'reset-before-start'}
 ENGINES = {'vllm': 'vllm.yaml', 'sglang': 'sglang.yaml'}
 RUNTIME_ENV_KEYS = {'MAX_JOBS', 'CUTE_DSL_ARCH', 'PYTORCH_CUDA_ALLOC_CONF',
-                    'SGLANG_QWEN4_PLE_FILE_RSS_BUDGET_GB', 'TIKTOKEN_ENCODINGS_BASE'}
+                    'SGLANG_QWEN4_PLE_FILE_RSS_BUDGET_GB', 'TIKTOKEN_ENCODINGS_BASE',
+                    'VLLM_USE_RUST_FRONTEND', 'VLLM_USE_V2_MODEL_RUNNER'}
 
 
 class UniqueLoader(yaml.SafeLoader):
@@ -73,6 +74,12 @@ def load(root, profile_id=DEFAULT_PROFILE):
     for key in ('text-only', 'reasoning-default', 'reasoning-toggle', 'tool-support'):
         if type(metadata[key]) is not bool:
             raise RuntimeError(f'{key} must be a YAML boolean')
+    reasoning_control = metadata.get('reasoning-control', 'enable-thinking')
+    if reasoning_control not in ('enable-thinking', 'reasoning-effort'):
+        raise RuntimeError('Unknown reasoning control')
+    if reasoning_control == 'reasoning-effort' and not metadata['reasoning-toggle']:
+        raise RuntimeError('reasoning-effort control requires a toggleable profile')
+
     for key in ('context-tokens', 'max-running-requests'):
         if type(metadata[key]) is not int or metadata[key] <= 0:
             raise RuntimeError(f'{key} must be a positive integer')

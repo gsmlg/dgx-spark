@@ -71,7 +71,11 @@ class Client:
     def count(self, messages):
         body = {'model': self.alias, 'messages': messages, 'add_generation_prompt': True}
         if self.policy['reasoning-toggle']:
-            body['chat_template_kwargs'] = {'enable_thinking': self.policy['reasoning-default']}
+            control = self.policy.get('reasoning-control', 'enable-thinking')
+            key = 'reasoning_effort' if control == 'reasoning-effort' else 'enable_thinking'
+            value = ('high' if self.policy['reasoning-default'] else 'none') \
+                if control == 'reasoning-effort' else self.policy['reasoning-default']
+            body['chat_template_kwargs'] = {key: value}
         result = self.json('/tokenize', body)
         return result['count']
 
@@ -223,9 +227,14 @@ def api(c):
     c.tool('lookup_inventory', 'sku', 'ITEM-17', '42')
     c.tool('lookup_status', 'ticket', 'TASK-83', 'complete')
     if c.policy['reasoning-toggle']:
-        thought = c.generate('thinking', c.body('What is 37 multiplied by 49? Explain briefly.',
-                             max_tokens=1024, chat_template_kwargs={'enable_thinking': True},
-                             temperature=1.0, top_p=0.95, top_k=20, presence_penalty=0))
+        reasoning_args = ({'reasoning_effort': 'high', 'temperature': 0.7}
+                          if c.policy.get('reasoning-control') == 'reasoning-effort'
+                          else {'chat_template_kwargs': {'enable_thinking': True},
+                                'temperature': 1.0, 'top_p': 0.95, 'top_k': 20,
+                                'presence_penalty': 0})
+        thought = c.generate('thinking', c.body(
+            'What is 37 multiplied by 49? Explain briefly.', max_tokens=1024,
+            **reasoning_args))
         msg = thought['choices'][0]['message']
         assert any(msg.get(field) for field in c.policy['reasoning-fields']), 'Reasoning field is empty'
         assert '1813' in response_text(msg)

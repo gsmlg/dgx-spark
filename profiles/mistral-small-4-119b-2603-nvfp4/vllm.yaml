@@ -1,0 +1,26 @@
+model: mistralai/Mistral-Small-4-119B-2603-NVFP4
+# Resolved from the Hub on 2026-09-15. Updates are explicit profile edits.
+revision: 45331841b631f4e281df8e959ea3cc9beb84298a
+tokenizer-revision: 45331841b631f4e281df8e959ea3cc9beb84298a
+served-model-name: local-assistant
+tensor-parallel-size: 1
+max-model-len: 262144
+max-num-seqs: 1
+gpu-memory-utilization: 0.80
+max-num-batched-tokens: 4096
+enable-chunked-prefill: true
+enable-prefix-caching: true
+attention-backend: TRITON_MLA
+dtype: auto
+kv-cache-dtype: auto
+language-model-only: false
+reasoning-parser: mistral
+tool-call-parser: mistral
+enable-auto-tool-choice: true
+default-chat-template-kwargs: {}
+generation-config: auto
+override-generation-config:
+  temperature: 0.1
+enable-log-requests: false
+enable-log-outputs: false
+disable-uvicorn-access-log: true

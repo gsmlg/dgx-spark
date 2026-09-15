@@ -1,0 +1,14 @@
+schema-version: 1
+id: diffusiongemma-26b-a4b-it-nvfp4
+engine: vllm
+display-name: DiffusionGemma 26B-A4B IT NVFP4
+text-only: false
+reasoning-default: true
+reasoning-toggle: true
+reasoning-fields: [reasoning, reasoning_content]
+tool-support: true
+context-tokens: 262144
+max-running-requests: 8
+runtime-environment: {}
+required-runtime-features: [gemma4, fastsafetensors, TRITON_ATTN, diffusion-config]
+derived-cache: null

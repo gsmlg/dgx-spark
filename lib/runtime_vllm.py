@@ -11,9 +11,11 @@ MODEL_KEYS = {'model', 'revision', 'tokenizer-revision', 'served-model-name',
               'dtype', 'kv-cache-dtype', 'language-model-only', 'reasoning-parser',
               'tool-call-parser', 'enable-auto-tool-choice', 'default-chat-template-kwargs',
               'generation-config', 'override-generation-config', 'enable-log-requests',
-              'enable-log-outputs', 'disable-uvicorn-access-log', 'enforce-eager'}
-OPTIONAL_KEYS = {'enable-flashinfer-autotune'}
-OPTIONAL_KEYS = {'enforce-eager'}
+              'enable-log-outputs', 'disable-uvicorn-access-log', 'enforce-eager',
+              'enable-flashinfer-autotune', 'load-format', 'attention-backend',
+              'diffusion-config'}
+OPTIONAL_KEYS = {'enable-flashinfer-autotune', 'enforce-eager', 'load-format',
+                 'attention-backend', 'diffusion-config'}
 BOOL_KEYS = {'enable-chunked-prefill', 'enable-prefix-caching', 'language-model-only',
              'enable-auto-tool-choice', 'enable-log-requests', 'enable-log-outputs',
              'disable-uvicorn-access-log', 'enforce-eager'}
@@ -41,7 +43,15 @@ def validate(native, metadata):
         raise RuntimeError('Native language-only mode must match the profile input policy')
     if native['enable-log-requests'] or native['enable-log-outputs']:
         raise RuntimeError('Prompt and output logs must be disabled')
-    if not isinstance(native['override-generation-config'], dict) or 'max_new_tokens' in native['override-generation-config']:
+    if native.get('load-format') not in (None, 'fastsafetensors'):
+        raise RuntimeError('Unsupported vLLM load format')
+    if native.get('attention-backend') not in (None, 'TRITON_ATTN', 'TRITON_MLA'):
+        raise RuntimeError('Unsupported attention backend')
+    if native.get('diffusion-config') not in (None, {'canvas_length': 256}):
+        raise RuntimeError('Unsupported diffusion configuration')
+    override = native['override-generation-config']
+    if not isinstance(override, dict) or (
+            'max_new_tokens' in override and override['max_new_tokens'] is not None):
         raise RuntimeError('Invalid generation override configuration')
 
 
@@ -50,7 +60,7 @@ def repository(native):
 
 
 def inspect_entrypoint(entrypoint):
-    if entrypoint != ['vllm', 'serve']:
+    if entrypoint not in (['vllm', 'serve'], ['/opt/nvidia/nvidia_entrypoint.sh']):
         raise RuntimeError(f'Unsupported vLLM image entrypoint {entrypoint}')
 
 
@@ -62,7 +72,8 @@ def cuda_probe():
 
 
 def probe_command(pinned):
-    return ['docker', 'run', '--rm', '--gpus', 'all', pinned, '--help=all']
+    return ['docker', 'run', '--rm', '--gpus', 'all', '--entrypoint', 'vllm',
+            pinned, 'serve', '--help=all']
 
 
 def validate_help(help_text, native, metadata):
@@ -79,5 +90,6 @@ def render(native, snapshot, host, authenticated=False):
     resolved.update({'model': snapshot, 'tokenizer': snapshot, 'host': host['BIND_HOST'],
                      'port': host['PORT'], 'shutdown-timeout': host['SHUTDOWN_TIMEOUT']})
     return {'config_name': 'vllm.yaml', 'config_text': yaml.safe_dump(resolved, sort_keys=False),
-            'entrypoint': None, 'command': ['--config', '/release/vllm.yaml'], 'resolved': resolved,
+            'entrypoint': ['vllm', 'serve'], 'command': ['--config', '/release/vllm.yaml'],
+            'resolved': resolved,
             'environment': {'VLLM_API_KEY': '${VLLM_API_KEY:-}', 'VLLM_CACHE_ROOT': '/runtime-cache/vllm'}}

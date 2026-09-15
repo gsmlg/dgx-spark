@@ -13,6 +13,9 @@ Extend the existing single-service lifecycle rather than add independent Docker 
 | `laguna-s-2.1-nvfp4` | vLLM | `poolside/Laguna-S-2.1-NVFP4` | 5,120 combined tokens, one scheduled request |
 | `laguna-xs-2.1-nvfp4` | vLLM | `poolside/Laguna-XS-2.1-NVFP4` | 262,144 combined tokens, one scheduled request |
 | `gpt-oss-120b-mxfp4` | vLLM | `openai/gpt-oss-120b` | 131,072 combined tokens, one scheduled request |
+| `gemma-4-26b-a4b-nvfp4` | vLLM | `nvidia/Gemma-4-26B-A4B-NVFP4` | 262,144 combined tokens, eight scheduled multimodal requests |
+| `diffusiongemma-26b-a4b-it-nvfp4` | vLLM | `nvidia/diffusiongemma-26B-A4B-it-NVFP4` | 262,144 combined tokens, eight scheduled diffusion requests |
+| `mistral-small-4-119b-2603-nvfp4` | vLLM | `mistralai/Mistral-Small-4-119B-2603-NVFP4` | 262,144 combined tokens, one scheduled multimodal request |
 | `muse-glimmer-30b-nvfp4` | vLLM | `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` | 131,072 combined tokens, one scheduled multimodal request |
 | `qwen38-flash-next-nvfp4` | SGLang | `nvidia/Qwen3.8-Flash-Next-NVFP4` | 32,768 combined tokens, one scheduled request, file-backed PLE |
 
@@ -28,6 +31,9 @@ These are configured starting targets, not measured capacities. The checkpoint/r
 | [models/laguna-s-2.1-nvfp4.md](models/laguna-s-2.1-nvfp4.md) | Laguna artifact selection, vLLM settings, reasoning, DFlash and qualification |
 | [models/laguna-xs-2.1-nvfp4.md](models/laguna-xs-2.1-nvfp4.md) | Laguna XS artifact pin, serving defaults and qualification boundary |
 | [models/gpt-oss-120b-mxfp4.md](models/gpt-oss-120b-mxfp4.md) | GPT-OSS artifact pin, parsers, serving policy and qualification boundary |
+| [models/gemma-4-26b-a4b-nvfp4.md](models/gemma-4-26b-a4b-nvfp4.md) | Gemma artifact and image pins, multimodal contract, parsers and qualification boundary |
+| [models/diffusiongemma-26b-a4b-it-nvfp4.md](models/diffusiongemma-26b-a4b-it-nvfp4.md) | DiffusionGemma artifact pin, canvas policy, multimodal behavior and qualification boundary |
+| [models/mistral-small-4-119b-2603-nvfp4.md](models/mistral-small-4-119b-2603-nvfp4.md) | Mistral artifact pin, single-Spark policy, multimodal and reasoning contract |
 | [models/muse-glimmer-30b-nvfp4.md](models/muse-glimmer-30b-nvfp4.md) | Muse artifact pin, multimodal contract, parsers and qualification boundary |
 | [models/qwen38-flash-next.md](models/qwen38-flash-next.md) | Flash-Next artifact selection, SGLang, NVMe PLE lifecycle and qualification |
 | [sources.md](sources.md) | Primary sources, repository evidence and unresolved verification gates |

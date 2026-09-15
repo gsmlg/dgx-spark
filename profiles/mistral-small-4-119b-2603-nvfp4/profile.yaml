@@ -1,0 +1,15 @@
+schema-version: 1
+id: mistral-small-4-119b-2603-nvfp4
+engine: vllm
+display-name: Mistral Small 4 119B 2603 NVFP4
+text-only: false
+reasoning-default: false
+reasoning-toggle: true
+reasoning-control: reasoning-effort
+reasoning-fields: [reasoning, reasoning_content]
+tool-support: true
+context-tokens: 262144
+max-running-requests: 1
+runtime-environment: {}
+required-runtime-features: [mistral, TRITON_MLA]
+derived-cache: null

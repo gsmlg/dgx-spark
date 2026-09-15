@@ -1,7 +1,7 @@
 # Spark LLM
 
 One native ARM64 inference service, exposed as `local-assistant`, with safe switching
-between six model profiles. Only one model is resident at a time.
+between nine model profiles. Only one model is resident at a time.
 
 | Profile | Engine | Checkpoint | Initial combined context |
 |---|---|---|---:|
@@ -9,6 +9,9 @@ between six model profiles. Only one model is resident at a time.
 | `laguna-s-2.1-nvfp4` | vLLM | `poolside/Laguna-S-2.1-NVFP4` | 5,120 |
 | `laguna-xs-2.1-nvfp4` | vLLM | `poolside/Laguna-XS-2.1-NVFP4` | 262,144 |
 | `gpt-oss-120b-mxfp4` | vLLM | `openai/gpt-oss-120b` | 131,072 |
+| `gemma-4-26b-a4b-nvfp4` | vLLM | `nvidia/Gemma-4-26B-A4B-NVFP4` | 262,144 |
+| `diffusiongemma-26b-a4b-it-nvfp4` | vLLM | `nvidia/diffusiongemma-26B-A4B-it-NVFP4` | 262,144 |
+| `mistral-small-4-119b-2603-nvfp4` | vLLM | `mistralai/Mistral-Small-4-119B-2603-NVFP4` | 262,144 |
 | `muse-glimmer-30b-nvfp4` | vLLM | `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` | 131,072 |
 | `qwen38-flash-next-nvfp4` | SGLang | `nvidia/Qwen3.8-Flash-Next-NVFP4` | 32,768 |
 
@@ -91,9 +94,9 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 
 Add an Authorization bearer header if a key is configured. Tools execute in your
 client, after inspecting the returned tool call. The service does not run tools.
-All profiles except Muse Glimmer accept text input only. Muse Glimmer accepts text and
-image inputs through Chat Completions; video, Responses API and embeddings remain outside
-the qualified scope.
+Muse Glimmer, Gemma 4, DiffusionGemma and Mistral Small 4 accept text and image
+inputs through Chat Completions. All other profiles accept text input only; video, audio,
+Responses API and embeddings remain outside the qualified scope.
 
 Non-thinking is the server default: temperature 0.7, top-p 0.8, top-k 20,
 presence penalty 1.5, min-p 0, repetition penalty 1.0. To enable thinking, send
@@ -106,12 +109,16 @@ GPT-OSS and Muse Glimmer are exceptions: reasoning is intrinsic rather than cont
 `enable_thinking`. Muse uses `reasoning_strength` (`low`, `medium`, `high`, or `xhigh`)
 in chat-template kwargs and should use temperature 1.0, top-p 0.95 and top-k 64. Preserve
 returned reasoning/tool history and see the model-specific guide before switching.
+Mistral Small 4 instead uses the top-level `reasoning_effort` request field: `none` is
+the default and `high` enables reasoning; use temperature 0.7 with `high`. DiffusionGemma
+uses the Gemma toggle but defaults thinking on because tool calling is more reliable in
+that mode. Its 256-token denoising canvas raises time to first token.
 
 Always specify `max_tokens`. The suggested client default is 4,096; it is not a
 server-wide output cap. For the 262,144-token profiles, a 16,384 output reservation is
 valid with at most 245,760 formatted input tokens. Use the selected profile's configured
-context limit and count system/history/tool/template tokens too. One scheduled sequence
-means overlapping HTTP requests can wait; it does not bound the HTTP queue.
+context limit and count system/history/tool/template tokens too. A profile's scheduled
+sequence limit controls concurrent execution; additional HTTP requests can wait in the queue.
 
 ## Lifecycle
 
@@ -131,6 +138,21 @@ bin/spark-llm start --profile laguna-xs-2.1-nvfp4
 bin/spark-llm download --profile gpt-oss-120b-mxfp4
 bin/spark-llm prepare --profile gpt-oss-120b-mxfp4
 bin/spark-llm start --profile gpt-oss-120b-mxfp4
+
+# Prepare and switch to multimodal DiffusionGemma 26B-A4B IT NVFP4.
+bin/spark-llm download --profile diffusiongemma-26b-a4b-it-nvfp4
+bin/spark-llm prepare --profile diffusiongemma-26b-a4b-it-nvfp4
+bin/spark-llm start --profile diffusiongemma-26b-a4b-it-nvfp4
+
+# Prepare and switch to multimodal Gemma 4 26B-A4B NVFP4.
+bin/spark-llm download --profile gemma-4-26b-a4b-nvfp4
+bin/spark-llm prepare --profile gemma-4-26b-a4b-nvfp4
+bin/spark-llm start --profile gemma-4-26b-a4b-nvfp4
+
+# Prepare and switch to multimodal Mistral Small 4 119B NVFP4.
+bin/spark-llm download --profile mistral-small-4-119b-2603-nvfp4
+bin/spark-llm prepare --profile mistral-small-4-119b-2603-nvfp4
+bin/spark-llm start --profile mistral-small-4-119b-2603-nvfp4
 
 # Prepare and switch to multimodal Muse Glimmer 30B NVFP4.
 bin/spark-llm download --profile muse-glimmer-30b-nvfp4

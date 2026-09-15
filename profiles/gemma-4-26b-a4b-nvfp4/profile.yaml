@@ -1,0 +1,16 @@
+schema-version: 1
+id: gemma-4-26b-a4b-nvfp4
+engine: vllm
+display-name: Gemma 4 26B-A4B NVFP4
+text-only: false
+reasoning-default: false
+reasoning-toggle: true
+reasoning-fields: [reasoning, reasoning_content]
+tool-support: true
+context-tokens: 262144
+max-running-requests: 8
+runtime-environment:
+  VLLM_USE_RUST_FRONTEND: 1
+  VLLM_USE_V2_MODEL_RUNNER: 1
+required-runtime-features: [gemma4, fastsafetensors]
+derived-cache: null

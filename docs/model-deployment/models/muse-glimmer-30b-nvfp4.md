@@ -28,7 +28,7 @@ actual start establishes GB10 ModelOpt kernel compatibility. [M1](../sources.md)
 
 The configured target is 131,072 combined tokens and up to 32 scheduled requests. The
 profile reserves 70% of unified GPU memory, enables chunked prefill and prefix caching,
-uses the V2 model runner, and leaves KV-cache dtype automatic. The
+uses the V2 model runner, and sets KV-cache dtype to FP8. The
 70% memory reservation is the Spark-specific guardrail retained from the working
 baseline; it intentionally does not copy the generic recipe's more aggressive memory
 fraction. These are configured settings, not measured capacity or throughput.

@@ -11,7 +11,7 @@ max-num-batched-tokens: 8192
 enable-chunked-prefill: true
 enable-prefix-caching: true
 dtype: auto
-kv-cache-dtype: auto
+kv-cache-dtype: fp8
 language-model-only: false
 reasoning-parser: gemma4
 tool-call-parser: gemma4

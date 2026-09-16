@@ -12,7 +12,7 @@ enable-chunked-prefill: true
 enable-prefix-caching: true
 attention-backend: TRITON_MLA
 dtype: auto
-kv-cache-dtype: auto
+kv-cache-dtype: fp8
 language-model-only: false
 reasoning-parser: mistral
 tool-call-parser: mistral

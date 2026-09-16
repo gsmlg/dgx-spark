@@ -71,6 +71,7 @@ class ConfigurationTests(unittest.TestCase):
         for profile in loaded.values():
             adapter = lc.ADAPTERS[profile['engine']]
             adapter.validate(profile['native'], profile['metadata'])
+            self.assertIn(profile['native']['kv-cache-dtype'], ('fp8', 'fp8_e4m3'))
             auxiliary = {model['name']: f'/hf-cache/{model["name"]}'
                          for model in profile['metadata'].get('auxiliary-models', [])}
             rendered = adapter.render(
@@ -119,7 +120,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(native['revision'], 'd35cb79050f419c457611b1cee5c5d15b176f285')
         self.assertEqual(native['tokenizer-revision'], native['revision'])
         self.assertEqual(native['max-model-len'], 131072)
-        self.assertEqual(native['kv-cache-dtype'], 'auto')
+        self.assertEqual(native['kv-cache-dtype'], 'fp8')
         self.assertEqual(native['reasoning-parser'], 'muse_glimmer')
         self.assertEqual(native['tool-call-parser'], 'muse_glimmer')
         self.assertFalse(profile['metadata']['text-only'])
@@ -179,6 +180,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(native['max-num-seqs'], 1)
         self.assertEqual(native['gpu-memory-utilization'], 0.80)
         self.assertEqual(native['attention-backend'], 'TRITON_MLA')
+        self.assertEqual(native['kv-cache-dtype'], 'fp8')
         self.assertEqual(native['reasoning-parser'], 'mistral')
         self.assertEqual(native['tool-call-parser'], 'mistral')
         self.assertFalse(profile['metadata']['text-only'])
@@ -221,6 +223,8 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(rendered['entrypoint'], ['python3', '-m', 'sglang.launch_server'])
         self.assertIn('--ple-offload-embedding', rendered['command'])
         self.assertIn('--max-total-tokens', rendered['command'])
+        self.assertEqual(rendered['command'][rendered['command'].index('--kv-cache-dtype') + 1],
+                         'fp8_e4m3')
         self.assertEqual(rendered['resolved']['max-total-tokens'], 32768)
         self.assertIn('${VLLM_API_KEY:?}', rendered['command'])
         compose = lc.render_compose(rendered, profile['metadata'])

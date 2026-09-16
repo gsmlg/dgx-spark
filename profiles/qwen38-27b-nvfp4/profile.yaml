@@ -2,7 +2,7 @@ schema-version: 1
 id: qwen38-27b-nvfp4
 engine: vllm
 display-name: Qwen3.8 27B NVFP4
-text-only: true
+text-only: false
 reasoning-default: false
 reasoning-toggle: true
 reasoning-fields: [reasoning, reasoning_content]

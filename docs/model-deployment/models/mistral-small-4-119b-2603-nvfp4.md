@@ -24,7 +24,8 @@ must still demonstrate actual compatibility. [MS1](../sources.md)
 The publisher's generic example uses TP2, 128 sequences, a 16,384-token scheduler batch
 and 80% GPU-memory utilization. A DGX Spark exposes one GB10 GPU, so this profile adapts
 that to TP1, one scheduled sequence and a 4,096-token batch while retaining the 80%
-memory target, chunked prefill and prefix caching. KV cache dtype remains automatic.
+memory target, chunked prefill and prefix caching. KV cache dtype is explicitly FP8;
+its effect on memory, speed and output quality is not yet qualified on this host.
 The 262K setting is a qualification target, not a measured capacity claim.
 
 Text and image input are enabled. Reasoning defaults off. Clients enable it with the

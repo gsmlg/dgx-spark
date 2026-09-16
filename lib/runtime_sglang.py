@@ -7,6 +7,7 @@ import yaml
 
 MODEL_KEYS = {'model-path', 'revision', 'tokenizer-revision', 'served-model-name', 'tp-size',
               'context-length', 'max-running-requests', 'max-total-tokens', 'mem-fraction-static',
+              'kv-cache-dtype',
               'chunked-prefill-size', 'ple-offload-embedding', 'ple-offload-backend',
               'ple-offload-dir', 'moe-runner-backend', 'fp4-gemm-backend', 'page-size',
               'max-mamba-cache-size', 'reasoning-parser', 'tool-call-parser', 'trust-remote-code'}
@@ -29,6 +30,8 @@ def validate(native, metadata):
         raise RuntimeError('Native context/concurrency does not match profile policy')
     if native['max-total-tokens'] < native['context-length']:
         raise RuntimeError('max-total-tokens must cover one configured-context request')
+    if native['kv-cache-dtype'] != 'fp8_e4m3':
+        raise RuntimeError('Flash-Next requires the supported FP8 E4M3 KV cache dtype')
     if native['ple-offload-embedding'] is not True or native['ple-offload-backend'] != 'file' or native['ple-offload-dir'] != '/ple-cache':
         raise RuntimeError('Flash-Next requires the owned file-backed PLE cache')
     if native['moe-runner-backend'] != 'flashinfer_cutlass' or native['fp4-gemm-backend'] != 'flashinfer_cutlass':

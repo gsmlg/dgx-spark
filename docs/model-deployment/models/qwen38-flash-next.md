@@ -41,6 +41,7 @@ If no compatible prebuilt ARM64 image passes admission, mark the profile blocked
 | Combined context | 32,768 tokens |
 | Running requests | 1; inspect effective scheduler limit |
 | Shared KV pool | `max-total-tokens: 32768`; bound allocation to the single configured-context request |
+| KV precision | Explicit `fp8_e4m3`; the pinned SGLang CLI does not accept `fp8` as an alias |
 | Static allocation starting point | `mem-fraction-static: 0.85`, subject to host guardrails |
 | PLE | NVMe file backend; separate writable derived-data mount |
 | Expert backend | Explicit compatible CUTLASS path; validate resolved logs |
@@ -54,7 +55,8 @@ Host validation on 2026-09-14 found that leaving `max-total-tokens` unset alloca
 750,016-token BF16 KV pool (17.16 GiB) despite the single 32,768-token request policy.
 The server reached readiness, but CUDA-graph capture reported 14.92 GiB available and
 the lifecycle stopped it after 15 continuous seconds below the 16 GiB host floor. The
-profile now caps the shared KV pool at 32,768 tokens; this revised release still requires
+profile now caps the shared KV pool at 32,768 tokens; the later FP8 E4M3
+configuration is a separate candidate and still requires
 startup and API verification before it is considered runnable.
 
 The first bounded-KV start reached health with 32.88 GiB available during CUDA-graph

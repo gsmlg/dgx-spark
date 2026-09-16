@@ -24,7 +24,8 @@ wrapper entrypoint cannot reinterpret the config arguments. [E1](../sources.md)
 This is a multimodal text-and-image profile. It uses the recipe's DGX Spark settings:
 TP1, 80% GPU-memory utilization, eight scheduled sequences, an 8,192-token scheduler
 batch, prefix caching, the Rust API frontend, the v2 model runner and `fastsafetensors`.
-Chunked prefill is explicitly enabled. The KV cache stays at the checkpoint/runtime automatic dtype.
+Chunked prefill is explicitly enabled. The KV cache is explicitly set to FP8;
+its effect on memory, speed and output quality is not yet qualified on this host.
 Configured 262K capacity is a target, not a measured claim.
 
 Reasoning defaults off and can be enabled per request with

@@ -16,6 +16,11 @@ between nine model profiles. Only one model is resident at a time.
 | `qwen38-flash-next-nvfp4` | SGLang | `nvidia/Qwen3.8-Flash-Next-NVFP4` | 32,768 |
 
 **Configured capacity is not qualified capacity.** Check status and reports for actual results.
+All nine profiles explicitly request FP8 KV cache. vLLM profiles use `fp8` or
+`fp8_e4m3`; the SGLang Flash-Next profile uses `fp8_e4m3` because its pinned
+runtime does not accept the `fp8` alias. Existing prepared releases retain their
+frozen settings until each profile is prepared again. FP8 startup, capacity and
+output quality require profile-specific validation.
 
 Host validation on 2026-09-08: release `34d2325c4774623a9d1aef00` passed the
 CUDA probe, startup smoke and basic API suite on this GB10 host. Streaming,
@@ -94,9 +99,10 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 
 Add an Authorization bearer header if a key is configured. Tools execute in your
 client, after inspecting the returned tool call. The service does not run tools.
-Muse Glimmer, Gemma 4, DiffusionGemma and Mistral Small 4 accept text and image
-inputs through Chat Completions. All other profiles accept text input only; video, audio,
-Responses API and embeddings remain outside the qualified scope.
+Qwen3.8 27B, Muse Glimmer, Gemma 4, DiffusionGemma and Mistral Small 4 accept
+text and image inputs through Chat Completions after their respective multimodal
+releases pass API validation. The other profiles accept text input only; video,
+audio, Responses API and embeddings remain outside the qualified scope.
 
 Non-thinking is the server default: temperature 0.7, top-p 0.8, top-k 20,
 presence penalty 1.5, min-p 0, repetition penalty 1.0. To enable thinking, send

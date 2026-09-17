@@ -13,6 +13,9 @@ enable-prefix-caching: true
 attention-backend: TRITON_MLA
 dtype: auto
 kv-cache-dtype: fp8
+tokenizer-mode: mistral
+middleware:
+  - vllm_response_compat.ResponsesMessageMiddleware
 language-model-only: false
 reasoning-parser: mistral
 tool-call-parser: mistral

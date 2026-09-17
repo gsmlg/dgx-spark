@@ -1,5 +1,6 @@
 """vLLM-specific validation, probing, and release rendering."""
 import json
+from pathlib import Path
 import re
 
 import yaml
@@ -8,17 +9,18 @@ import yaml
 MODEL_KEYS = {'model', 'revision', 'tokenizer-revision', 'served-model-name',
               'tensor-parallel-size', 'max-model-len', 'max-num-seqs', 'gpu-memory-utilization',
               'max-num-batched-tokens', 'enable-chunked-prefill', 'enable-prefix-caching',
-              'dtype', 'kv-cache-dtype', 'language-model-only', 'reasoning-parser',
+              'dtype', 'kv-cache-dtype', 'tokenizer-mode', 'language-model-only', 'reasoning-parser',
               'tool-call-parser', 'enable-auto-tool-choice', 'default-chat-template-kwargs',
               'generation-config', 'override-generation-config', 'enable-log-requests',
               'enable-log-outputs', 'disable-uvicorn-access-log', 'enforce-eager',
               'enable-flashinfer-autotune', 'load-format', 'attention-backend',
-              'diffusion-config', 'speculative-config'}
-OPTIONAL_KEYS = {'enable-flashinfer-autotune', 'enforce-eager', 'load-format',
-                 'attention-backend', 'diffusion-config', 'speculative-config'}
+              'diffusion-config', 'speculative-config', 'middleware'}
+OPTIONAL_KEYS = {'enable-flashinfer-autotune', 'enforce-eager', 'load-format', 'tokenizer-mode',
+                 'attention-backend', 'diffusion-config', 'speculative-config', 'middleware'}
 BOOL_KEYS = {'enable-chunked-prefill', 'enable-prefix-caching', 'language-model-only',
              'enable-auto-tool-choice', 'enable-log-requests', 'enable-log-outputs',
              'disable-uvicorn-access-log', 'enforce-eager'}
+RESPONSE_MIDDLEWARE = 'vllm_response_compat.ResponsesMessageMiddleware'
 
 
 def validate(native, metadata):
@@ -45,6 +47,10 @@ def validate(native, metadata):
         raise RuntimeError('Prompt and output logs must be disabled')
     if native.get('load-format') not in (None, 'fastsafetensors'):
         raise RuntimeError('Unsupported vLLM load format')
+    if 'tokenizer-mode' in native and native['tokenizer-mode'] not in ('auto', 'hf', 'slow', 'mistral'):
+        raise RuntimeError('Unsupported tokenizer mode')
+    if 'middleware' in native and native['middleware'] != [RESPONSE_MIDDLEWARE]:
+        raise RuntimeError('Unsupported vLLM middleware')
     if native.get('attention-backend') not in (None, 'TRITON_ATTN', 'TRITON_MLA'):
         raise RuntimeError('Unsupported attention backend')
     if native.get('diffusion-config') not in (None, {'canvas_length': 256}):
@@ -108,6 +114,8 @@ def validate_help(help_text, native, metadata):
 def render(native, snapshot, host, authenticated=False, auxiliary_models=None,
            rust_frontend=False):
     resolved = dict(native)
+    files = ({'vllm_response_compat.py': Path(__file__).with_name('vllm_response_compat.py').read_text()}
+             if RESPONSE_MIDDLEWARE in native.get('middleware', []) else {})
     if 'speculative-config' in resolved:
         speculative = dict(resolved['speculative-config'])
         try:
@@ -132,7 +140,9 @@ def render(native, snapshot, host, authenticated=False, auxiliary_models=None,
                 if isinstance(value, (dict, list)):
                     value = json.dumps(value, separators=(',', ':'))
                 command.extend([flag, str(value)])
+    environment = {'VLLM_API_KEY': '${VLLM_API_KEY:-}', 'VLLM_CACHE_ROOT': '/runtime-cache/vllm'}
+    if files:
+        environment['PYTHONPATH'] = '/release'
     return {'config_name': 'vllm.yaml', 'config_text': yaml.safe_dump(resolved, sort_keys=False),
             'entrypoint': ['vllm', 'serve'], 'command': command,
-            'resolved': resolved,
-            'environment': {'VLLM_API_KEY': '${VLLM_API_KEY:-}', 'VLLM_CACHE_ROOT': '/runtime-cache/vllm'}}
+            'resolved': resolved, 'files': files, 'environment': environment}

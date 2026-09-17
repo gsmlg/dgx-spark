@@ -1,4 +1,5 @@
 """Focused checks for configuration safety and immutable release handling."""
+import asyncio
 import contextlib
 import hashlib
 import io
@@ -12,6 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
 import lifecycle as lc
 from artifact_layout import validate_artifact_layout
+from vllm_response_compat import ResponsesMessageMiddleware, rewrite_responses_messages
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -80,6 +82,236 @@ class ConfigurationTests(unittest.TestCase):
                 rust_frontend=bool(profile['metadata']['runtime-environment'].get(
                     'VLLM_USE_RUST_FRONTEND')))
             self.assertIn('local-assistant', rendered['resolved'].values())
+
+    def test_vllm_tokenizer_modes_are_optional_and_validated(self):
+        profile = lc.profiles.load(lc.ROOT, 'mistral-small-4-119b-2603-nvfp4')
+        native = dict(profile['native'])
+        metadata = profile['metadata']
+        for mode in ('auto', 'hf', 'slow', 'mistral'):
+            with self.subTest(mode=mode):
+                native['tokenizer-mode'] = mode
+                lc.runtime_vllm.validate(native, metadata)
+        for mode in ('fast', None, True):
+            with self.subTest(invalid_mode=mode):
+                native['tokenizer-mode'] = mode
+                with self.assertRaisesRegex(RuntimeError, 'Unsupported tokenizer mode'):
+                    lc.runtime_vllm.validate(native, metadata)
+        native.pop('tokenizer-mode')
+        lc.runtime_vllm.validate(native, metadata)
+
+    def test_vllm_middleware_is_restricted(self):
+        profile = lc.profiles.load(lc.ROOT, 'mistral-small-4-119b-2603-nvfp4')
+        native = dict(profile['native'])
+        native['middleware'] = ['unexpected.Middleware']
+        with self.assertRaisesRegex(RuntimeError, 'Unsupported vLLM middleware'):
+            lc.runtime_vllm.validate(native, profile['metadata'])
+
+    def test_responses_adapter_normalizes_roles_and_text_only_content(self):
+        request = {'model': 'local-assistant', 'input': [
+            {'role': 'developer', 'content': [{'type': 'input_text', 'text': 'rules'}]},
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': 'h'},
+                                        {'type': 'input_text', 'text': 'i'}]},
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': 'look'},
+                                         {'type': 'input_image', 'image_url': 'https://example.test/a.png'}]},
+            {'type': 'function_call_output', 'call_id': 'x', 'output': 'ok'}],
+            'instructions': 'leave unchanged', 'stream': True}
+        result = json.loads(rewrite_responses_messages(json.dumps(request).encode()))
+        self.assertEqual(result['input'][0], {'role': 'system', 'content': 'rules'})
+        self.assertEqual(result['input'][1], {'role': 'user', 'content': 'hi'})
+        self.assertEqual(result['input'][2:], request['input'][2:])
+        self.assertEqual(result['instructions'], request['instructions'])
+        for body in (b'not json', json.dumps({'input': 'hi'}).encode(),
+                     json.dumps({'input': [{'role': 'user', 'content': 'hi'}]}).encode()):
+            self.assertEqual(rewrite_responses_messages(body), body)
+
+    def test_responses_role_adapter_replays_body_and_updates_length(self):
+        received = []
+
+        async def app(scope, receive, send):
+            received.append((scope, await receive()))
+
+        async def run():
+            body = b'{"input":[{"role":"developer","content":"hi"}]}'
+            events = [{'type': 'http.request', 'body': body[:10], 'more_body': True},
+                      {'type': 'http.request', 'body': body[10:], 'more_body': False}]
+
+            async def receive():
+                return events.pop(0)
+
+            scope = {'type': 'http', 'method': 'POST', 'path': '/v1/responses',
+                     'headers': [(b'content-length', str(len(body)).encode())]}
+            await ResponsesMessageMiddleware(app)(scope, receive, lambda message: None)
+
+        asyncio.run(run())
+        scope, event = received[0]
+        self.assertEqual(json.loads(event['body'])['input'][0]['role'], 'system')
+        self.assertEqual(scope['headers'][0][1], str(len(event['body'])).encode())
+
+    def test_responses_adapter_aliases_only_invalid_function_names(self):
+        long_name = 'mcp__codex_apps__github___search_installed_repositories_streaming'
+        request = {'input': [
+            {'type': 'function_call', 'name': long_name, 'arguments': '{}', 'call_id': 'c1'},
+            {'type': 'function_call_output', 'call_id': 'c1', 'output': long_name}],
+            'tools': [{'type': 'function', 'name': long_name, 'description': long_name},
+                      {'type': 'function', 'name': 'short_name', 'description': 'ok'}],
+            'tool_choice': {'type': 'function', 'name': long_name}}
+        result = json.loads(rewrite_responses_messages(json.dumps(request).encode()))
+        alias = result['tools'][0]['name']
+        self.assertLessEqual(len(alias), 64)
+        self.assertRegex(alias, r'^[A-Za-z0-9_-]+$')
+        self.assertEqual(result['tools'][0]['description'], long_name)
+        self.assertEqual(result['tools'][1], request['tools'][1])
+        self.assertEqual(result['tool_choice']['name'], alias)
+        self.assertEqual(result['input'][0]['name'], alias)
+        self.assertEqual(result['input'][1], request['input'][1])
+        self.assertEqual(rewrite_responses_messages(json.dumps(request).encode()),
+                         rewrite_responses_messages(json.dumps(request).encode()))
+
+    def test_responses_adapter_restores_function_names_in_json_and_split_sse(self):
+        long_name = 'mcp__codex_apps__github___search_installed_repositories_streaming'
+        sent = []
+        received = []
+
+        async def app(scope, receive, send):
+            received.append((scope, await receive()))
+            alias = json.loads(received[-1][1]['body'])['tools'][0]['name']
+            await send({'type': 'http.response.start', 'status': 200,
+                        'headers': [(b'content-type', b'text/event-stream'),
+                                    (b'content-length', b'100')]})
+            added = {'type': 'response.output_item.added', 'item':
+                     {'type': 'function_call', 'name': alias, 'call_id': 'c1'}}
+            done = {'type': 'response.completed', 'response': {'output': [
+                {'type': 'function_call', 'name': alias, 'call_id': 'c1'}]}}
+            wire = (b'event: response.output_item.added\ndata: ' + json.dumps(added).encode()
+                    + b'\n\nevent: response.completed\ndata: ' + json.dumps(done).encode()
+                    + b'\n\ndata: [DONE]\n\n')
+            for part in (wire[:17], wire[17:47], wire[47:92], wire[92:]):
+                await send({'type': 'http.response.body', 'body': part, 'more_body': True})
+            await send({'type': 'http.response.body', 'body': b'', 'more_body': False})
+
+        async def run():
+            body = json.dumps({'input': 'hi', 'tools': [
+                {'type': 'function', 'name': long_name, 'parameters': {'type': 'object'}}]}).encode()
+            events = [{'type': 'http.request', 'body': body, 'more_body': False}]
+
+            async def receive():
+                return events.pop(0)
+
+            async def send(event):
+                sent.append(event)
+
+            scope = {'type': 'http', 'method': 'POST', 'path': '/v1/responses',
+                     'headers': [(b'content-length', str(len(body)).encode())]}
+            await ResponsesMessageMiddleware(app)(scope, receive, send)
+
+        asyncio.run(run())
+        self.assertNotIn(b'content-length', dict(sent[0]['headers']))
+        wire = b''.join(event.get('body', b'') for event in sent[1:])
+        self.assertIn(long_name.encode(), wire)
+        self.assertNotIn(json.loads(received[0][1]['body'])['tools'][0]['name'].encode(), wire)
+        self.assertIn(b'data: [DONE]\n\n', wire)
+
+    def test_responses_adapter_restores_nonstreaming_function_call(self):
+        long_name = 'mcp__codex_apps__github___search_installed_repositories_streaming'
+        sent = []
+
+        async def app(scope, receive, send):
+            alias = json.loads((await receive())['body'])['tools'][0]['name']
+            body = json.dumps({'output': [{'type': 'function_call', 'name': alias,
+                                           'call_id': 'c1'}]}).encode()
+            await send({'type': 'http.response.start', 'status': 200,
+                        'headers': [(b'content-type', b'application/json'),
+                                    (b'content-length', str(len(body)).encode())]})
+            await send({'type': 'http.response.body', 'body': body[:10], 'more_body': True})
+            await send({'type': 'http.response.body', 'body': body[10:], 'more_body': False})
+
+        async def run():
+            body = json.dumps({'input': 'hi', 'tools': [
+                {'type': 'function', 'name': long_name}]}).encode()
+            events = [{'type': 'http.request', 'body': body, 'more_body': False}]
+
+            async def receive():
+                return events.pop(0)
+
+            async def send(event):
+                sent.append(event)
+
+            await ResponsesMessageMiddleware(app)(
+                {'type': 'http', 'method': 'POST', 'path': '/v1/responses', 'headers': []},
+                receive, send)
+
+        asyncio.run(run())
+        self.assertEqual(json.loads(sent[1]['body'])['output'][0]['name'], long_name)
+        self.assertEqual(int(dict(sent[0]['headers'])[b'content-length']), len(sent[1]['body']))
+
+    def test_responses_adapter_aliases_namespaced_functions_and_restores_stream(self):
+        namespace = 'mcp__codex_apps__github'
+        name = '_search_installed_repositories_streaming'
+        original_flat = f'{namespace}__{name}'
+        sent = []
+
+        async def app(scope, receive, send):
+            request = json.loads((await receive())['body'])
+            tool = request['tools'][0]
+            alias = tool['tools'][0]['name']
+            self.assertEqual(tool['name'], namespace)
+            self.assertLessEqual(len(f'{namespace}__{alias}'), 64)
+            self.assertNotEqual(alias, name)
+            self.assertEqual(request['input'][0]['name'], alias)
+            self.assertEqual(request['tool_choice']['name'], f'{namespace}__{alias}')
+            await send({'type': 'http.response.start', 'status': 200,
+                        'headers': [(b'content-type', b'text/event-stream')]})
+            events = [
+                {'type': 'response.output_item.added', 'item':
+                 {'type': 'function_call', 'namespace': namespace, 'name': alias,
+                  'call_id': 'c1'}},
+                {'type': 'response.function_call_arguments.done', 'name': alias,
+                 'arguments': '{}'},
+                {'type': 'response.completed', 'response': {'output': [
+                    {'type': 'function_call', 'namespace': namespace,
+                     'name': alias, 'call_id': 'c1'}]}}]
+            wire = b''.join(b'data: ' + json.dumps(event).encode() + b'\n\n'
+                            for event in events)
+            await send({'type': 'http.response.body', 'body': wire[:31],
+                        'more_body': True})
+            await send({'type': 'http.response.body', 'body': wire[31:],
+                        'more_body': False})
+
+        async def run():
+            body = json.dumps({'input': [{'type': 'function_call', 'namespace': namespace,
+                                           'name': name, 'arguments': '{}', 'call_id': 'c1'}],
+                               'tools': [{'type': 'namespace', 'name': namespace,
+                                          'tools': [{'type': 'function', 'name': name}]}],
+                               'tool_choice': {'type': 'function', 'name': original_flat}}).encode()
+            events = [{'type': 'http.request', 'body': body, 'more_body': False}]
+
+            async def receive():
+                return events.pop(0)
+
+            async def send(event):
+                sent.append(event)
+
+            await ResponsesMessageMiddleware(app)(
+                {'type': 'http', 'method': 'POST', 'path': '/v1/responses', 'headers': []},
+                receive, send)
+
+        asyncio.run(run())
+        frames = b''.join(event.get('body', b'') for event in sent[1:]).split(b'\n\n')
+        output = [json.loads(frame.removeprefix(b'data: ')) for frame in frames if frame]
+        self.assertEqual(output[0]['item']['name'], name)
+        self.assertEqual(output[1]['name'], name)
+        self.assertEqual(output[2]['response']['output'][0]['namespace'], namespace)
+        self.assertEqual(output[2]['response']['output'][0]['name'], name)
+
+    def test_responses_adapter_aliases_long_namespace_when_needed(self):
+        namespace = 'very_long_namespace_' + 'x' * 50
+        name = 'read_data'
+        request = {'input': 'hi', 'tools': [{'type': 'namespace', 'name': namespace,
+                                            'tools': [{'type': 'function', 'name': name}]}]}
+        result = json.loads(rewrite_responses_messages(json.dumps(request).encode()))
+        tool = result['tools'][0]
+        self.assertLessEqual(len(f"{tool['name']}__{tool['tools'][0]['name']}"), 64)
+        self.assertNotEqual(tool['name'], namespace)
 
     def test_laguna_xs_profile_pins_native_context_and_parsers(self):
         profile = lc.profiles.load(lc.ROOT, 'laguna-xs-2.1-nvfp4')
@@ -181,8 +413,18 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(native['gpu-memory-utilization'], 0.80)
         self.assertEqual(native['attention-backend'], 'TRITON_MLA')
         self.assertEqual(native['kv-cache-dtype'], 'fp8')
+        self.assertEqual(native['tokenizer-mode'], 'mistral')
+        self.assertEqual(native['middleware'], [lc.runtime_vllm.RESPONSE_MIDDLEWARE])
         self.assertEqual(native['reasoning-parser'], 'mistral')
         self.assertEqual(native['tool-call-parser'], 'mistral')
+        self.assertTrue(native['enable-auto-tool-choice'])
+        self.assertNotIn('load-format', native)
+        rendered = lc.runtime_vllm.render(
+            native, '/hf-cache/snapshot',
+            {'BIND_HOST': '127.0.0.1', 'PORT': 8000, 'SHUTDOWN_TIMEOUT': 300})
+        self.assertEqual(rendered['resolved']['tokenizer-mode'], 'mistral')
+        self.assertIn('vllm_response_compat.py', rendered['files'])
+        self.assertEqual(rendered['environment']['PYTHONPATH'], '/release')
         self.assertFalse(profile['metadata']['text-only'])
         self.assertFalse(native['language-model-only'])
         self.assertFalse(profile['metadata']['reasoning-default'])

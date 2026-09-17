@@ -455,6 +455,9 @@ def prepare(host, secrets, profile, image):
                                         metadata['runtime-environment'].get('VLLM_USE_RUST_FRONTEND')))
     config_text = runtime_render['config_text']
     compose_text = render_compose(runtime_render, metadata)
+    runtime_files = runtime_render.get('files', {})
+    if any(Path(name).name != name for name in runtime_files):
+        fail('Invalid runtime file name')
     repository, revision = adapter.repository(model)
     policy = dict(metadata)
     identity = {'schema_version': 2, 'engine': profile['engine'], 'profile': metadata['id'],
@@ -462,6 +465,8 @@ def prepare(host, secrets, profile, image):
                 'config': runtime_render['resolved'], 'profile_policy': policy,
                 'policy_sha256': digest_object(policy), 'host': host,
                 'invocation': {'entrypoint': runtime_render['entrypoint'], 'command': runtime_render['command']},
+                'runtime_files_sha256': {name: hashlib.sha256(content.encode()).hexdigest()
+                                         for name, content in runtime_files.items()},
                 'compose_sha256': hashlib.sha256(compose_text.encode()).hexdigest()}
     release_id = digest_object(identity)[:24]
     path = STATE / 'releases' / release_id
@@ -489,11 +494,13 @@ def prepare(host, secrets, profile, image):
         config_name = runtime_render['config_name']
         (temp / config_name).write_text(config_text)
         (temp / 'compose.yaml').write_text(compose_text)
+        for name, content in runtime_files.items():
+            (temp / name).write_text(content)
         rec = {'id': release_id, 'prepared_at': time.time(), 'identity': identity,
                'image_candidate': image, 'entrypoint': entrypoint, 'runtime': runtime,
                'artifacts': artifacts, 'environment': environment_report,
                'hashes': {n: hashlib.sha256((temp / n).read_bytes()).hexdigest()
-                          for n in (config_name, 'compose.yaml')},
+                          for n in (config_name, 'compose.yaml', *runtime_files)},
                'compose_env': compose_env}
         atomic(temp / 'release.json', rec)
         os.rename(temp, path)

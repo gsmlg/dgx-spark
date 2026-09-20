@@ -17,6 +17,70 @@ from vllm_response_compat import ResponsesMessageMiddleware, rewrite_responses_m
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_vllm_prompt_details_optional_boolean_and_both_invocations(self):
+        profile = lc.profiles.load(lc.ROOT, 'gemma-4-26b-a4b-nvfp4')
+        native = dict(profile['native'])
+        host = {'BIND_HOST': '127.0.0.1', 'PORT': 8000, 'SHUTDOWN_TIMEOUT': 300}
+        for setting in (None, True, False):
+            with self.subTest(setting=setting):
+                candidate = dict(native)
+                if setting is None:
+                    candidate.pop('enable-prompt-tokens-details')
+                else:
+                    candidate['enable-prompt-tokens-details'] = setting
+                lc.runtime_vllm.validate(candidate, profile['metadata'])
+                normal = lc.runtime_vllm.render(candidate, '/hf-cache/snapshot', host)
+                rust = lc.runtime_vllm.render(candidate, '/hf-cache/snapshot', host,
+                                              rust_frontend=True)
+                self.assertEqual(normal['resolved'].get('enable-prompt-tokens-details'), setting)
+                self.assertEqual(rust['resolved'].get('enable-prompt-tokens-details'), setting)
+                self.assertEqual('--enable-prompt-tokens-details' in rust['command'], setting is True)
+                self.assertEqual('enable-prompt-tokens-details:' in normal['config_text'],
+                                 setting is not None)
+        for bad in (None, 0, 1, 'true', [], {}):
+            with self.subTest(bad=bad):
+                candidate = dict(native, **{'enable-prompt-tokens-details': bad})
+                with self.assertRaisesRegex(RuntimeError, 'boolean'):
+                    lc.runtime_vllm.validate(candidate, profile['metadata'])
+
+    def test_sglang_cache_report_optional_boolean_and_invocation(self):
+        profile = lc.profiles.load(lc.ROOT, 'qwen38-flash-next-nvfp4')
+        native = dict(profile['native'])
+        host = {'BIND_HOST': '127.0.0.1', 'PORT': 8000}
+        for setting in (None, True, False):
+            with self.subTest(setting=setting):
+                candidate = dict(native)
+                if setting is None:
+                    candidate.pop('enable-cache-report')
+                else:
+                    candidate['enable-cache-report'] = setting
+                lc.runtime_sglang.validate(candidate, profile['metadata'])
+                rendered = lc.runtime_sglang.render(candidate, '/hf-cache/snapshot', host)
+                self.assertEqual(rendered['resolved'].get('enable-cache-report'), setting)
+                self.assertEqual('--enable-cache-report' in rendered['command'], setting is True)
+        for bad in (None, 0, 1, 'true', [], {}):
+            with self.subTest(bad=bad):
+                candidate = dict(native, **{'enable-cache-report': bad})
+                with self.assertRaisesRegex(RuntimeError, 'boolean'):
+                    lc.runtime_sglang.validate(candidate, profile['metadata'])
+
+    def test_runtime_help_rejects_missing_cache_report_capability(self):
+        with self.assertRaisesRegex(RuntimeError, 'enable-prompt-tokens-details'):
+            lc.runtime_vllm.validate_help('--host --port --shutdown-timeout',
+                {'enable-prompt-tokens-details': True}, {'required-runtime-features': []})
+        with self.assertRaisesRegex(RuntimeError, 'Rust frontend'):
+            lc.runtime_vllm.validate_help(
+                '--enable-prompt-tokens-details --host --port --shutdown-timeout',
+                {'enable-prompt-tokens-details': True}, {'required-runtime-features': []},
+                rust_help='Options not implemented in Rust frontend yet:\n--enable-prompt-tokens-details')
+        lc.runtime_vllm.validate_help(
+            '--enable-prompt-tokens-details --host --port --shutdown-timeout',
+            {'enable-prompt-tokens-details': True}, {'required-runtime-features': []},
+            rust_help='--enable-prompt-tokens-details\nOptions not implemented in Rust frontend yet:')
+        with self.assertRaisesRegex(RuntimeError, 'enable-cache-report'):
+            lc.runtime_sglang.validate_help('', {'enable-cache-report': True},
+                {'required-runtime-features': []})
+
     def test_vllm_probe_includes_dynamic_attention_backend_registry(self):
         command = lc.runtime_vllm.probe_command('image@sha256:digest')
         self.assertEqual(command[6], 'python3')

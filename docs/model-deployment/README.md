@@ -47,3 +47,42 @@ its runtime features before downloading the checkpoint.
 
 Read `design.md`, then use the model guides. No new model weights or runtime images have
 been pulled and no target-host GPU qualification is claimed by the source implementation.
+
+## Token usage and prefix-cache verification
+
+The vLLM profiles request `enable-prompt-tokens-details: true`; the SGLang profile
+requests `enable-cache-report: true`. `prepare` checks those options against the
+selected image's CLI; the Rust vLLM profile also checks the Rust frontend help.
+The native Chat Completions API test checks input, output and total usage in
+non-streaming and final streaming responses, then sends two sequential requests
+with a long shared prefix and requires a reported positive hit on the second.
+Run it on every newly prepared profile; source and CLI checks cannot prove API
+behavior on a running model. A missing/null cache field is unreported, not zero.
+The cache count is part of prompt tokens and does not change the context limit.
+Responses API is outside this qualification scope.
+
+The candidate vLLM Python `/metrics` endpoint needs no extra switch and exposes
+`vllm:prefix_cache_hits_total`, `vllm:prefix_cache_queries_total`, and
+`vllm:kv_cache_usage_perc`; verify the exact names on the resolved image and Rust
+frontend. The candidate SGLang image requires `--enable-metrics` for `/metrics`;
+the current profile leaves that option off. If enabled separately, its current
+cache gauges include `sglang:cache_hit_rate`, `sglang:token_usage`, and
+`sglang:full_token_usage`. Service-wide hit ratio, KV occupancy, and one request's
+`cached_tokens` answer different questions.
+
+Prepared releases are immutable. To apply a source or profile change, run
+`bin/spark-llm prepare --profile <profile-id>`, review `bin/spark-llm status`,
+then switch during a planned window with
+`bin/spark-llm upgrade --profile <profile-id>` and verify using
+`bin/spark-llm test --mode api`. Preparation
+alone does not change the running release.
+
+Verification on 2026-09-17: all nine profiles passed local validation and all
+39 unit tests passed. The locally available vLLM v0.28.0, `gemma`, and
+`nightly-20260704` candidate images contain the Python CLI option and native
+Chat Completions cache-usage implementation; the Gemma candidate's Rust help
+also lists its own `--enable-prompt-tokens-details` option. The locally
+available `dev-qwen38-next-local` SGLang image contains the cache-report
+option and usage implementation. No new release was prepared or started for
+this change, so real API cache hits, streaming responses, and `/metrics` on
+the new releases remain unverified.

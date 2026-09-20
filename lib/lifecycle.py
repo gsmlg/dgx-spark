@@ -440,7 +440,11 @@ def prepare(host, secrets, profile, image):
     except (ValueError, IndexError):
         fail('CUDA probe did not produce valid runtime metadata')
     help_text = run(adapter.probe_command(pinned))
-    adapter.validate_help(help_text, model, metadata)
+    if profile['engine'] == 'vllm' and metadata['runtime-environment'].get('VLLM_USE_RUST_FRONTEND'):
+        adapter.validate_help(help_text, model, metadata,
+                              rust_help=run(adapter.rust_probe_command(pinned)))
+    else:
+        adapter.validate_help(help_text, model, metadata)
     artifacts = downloaded_artifacts(host, profile)
     if artifacts:
         print(f'Using verified pre-downloaded snapshot for {metadata["id"]}.', flush=True)

@@ -11,6 +11,7 @@ enforce-eager: true
 max-num-batched-tokens: 64
 enable-chunked-prefill: true
 enable-prefix-caching: true
+enable-prompt-tokens-details: true
 dtype: auto
 kv-cache-dtype: fp8_e4m3
 language-model-only: true

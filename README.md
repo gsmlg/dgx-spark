@@ -94,11 +94,38 @@ endpoint on a trusted private boundary.
 ```sh
 curl http://127.0.0.1:8000/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"local-assistant","messages":[{"role":"user","content":"Explain binary search."}],"max_tokens":4096,"stream":true}'
+  -d '{"model":"local-assistant","messages":[{"role":"user","content":"Explain binary search."}],"max_tokens":4096,"stream":true,"stream_options":{"include_usage":true}}'
 ```
 
 Add an Authorization bearer header if a key is configured. Tools execute in your
 client, after inspecting the returned tool call. The service does not run tools.
+
+In a non-streaming Chat Completions response, read `usage.prompt_tokens` (formatted
+input), `usage.completion_tokens` (output), and `usage.total_tokens` (their sum).
+For streaming, read the **single final usage event** before `[DONE]`; earlier chunks
+can carry null usage. Do not add chunk usage values together. With the profile's
+cache-report option enabled, `usage.prompt_tokens_details.cached_tokens` reports
+reused **input** tokens for that request. It is a subset of `prompt_tokens`, so do
+not add it to `total_tokens`. Missing or null `cached_tokens` means the native
+frontend did not report a count; only an explicit `0` reports zero hits. The pinned
+SGLang frontend omits the detail object when the hit count is zero, even with
+`enable-cache-report` enabled. A cache hit speeds prompt processing but does not
+reduce the input's context-length accounting.
+
+`/metrics` describes the service over time, not one request. The pinned vLLM
+Python frontend exposes it without another switch: `vllm:prefix_cache_hits_total`
+divided by `vllm:prefix_cache_queries_total` is the aggregate token hit ratio
+(when queries are nonzero), and `vllm:kv_cache_usage_perc` is current KV cache
+occupancy on a 0–1 scale. These names come from the v0.28.0 candidate image;
+confirm the actual metrics on each prepared release, especially the Rust frontend.
+The pinned SGLang candidate has `/metrics` only with its separate
+`--enable-metrics` switch, which this profile does not set. If enabled in a later
+release, its current names include `sglang:cache_hit_rate` and
+`sglang:token_usage` (the most occupied cache pool; `sglang:full_token_usage`
+reports the full-attention KV pool). `enable-cache-report` controls per-request
+API usage and does not turn on `/metrics`. Neither a service-wide cache ratio nor
+KV occupancy is the per-request `cached_tokens` count.
+
 Qwen3.8 27B, Muse Glimmer, Gemma 4, DiffusionGemma and Mistral Small 4 accept
 text and image inputs through Chat Completions after their respective multimodal
 releases pass API validation. The other profiles accept text input only; video,
@@ -205,6 +232,22 @@ file, literal vLLM configuration, artifact hashes, image identity and runtime me
 A candidate is marked running only after health and smoke generation/tool tests pass.
 A failed replacement restores the last accepted release when available and still exits
 with failure. First installation has no accepted rollback target.
+
+After editing a profile or runtime adapter, prepare that profile again. Review the
+new ID with `bin/spark-llm status`, then schedule a switch and run the API suite:
+
+```sh
+bin/spark-llm validate --profile <profile-id>
+bin/spark-llm prepare --profile <profile-id>
+bin/spark-llm status
+bin/spark-llm upgrade --profile <profile-id>
+bin/spark-llm test --mode api
+```
+
+`prepare` leaves the active service running; `upgrade` switches to the latest
+prepared release for that profile and entails planned downtime. Existing prepared
+releases are frozen and retain their original settings. Check the generated
+`state/releases/<id>/` configuration and the native API response after switching.
 
 Candidate containers have restart policy `no` while qualification is pending.
 Acceptance enables `unless-stopped`: running services return after restart/reboot,

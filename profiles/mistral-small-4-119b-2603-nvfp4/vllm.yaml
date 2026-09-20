@@ -10,6 +10,7 @@ gpu-memory-utilization: 0.80
 max-num-batched-tokens: 4096
 enable-chunked-prefill: true
 enable-prefix-caching: true
+enable-prompt-tokens-details: true
 attention-backend: TRITON_MLA
 dtype: auto
 kv-cache-dtype: fp8

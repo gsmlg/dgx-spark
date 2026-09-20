@@ -31,6 +31,22 @@ def resource_guardrail_failed(resources, minimum_available_bytes):
             resources['longest_continuous_swap_seconds'] >= SWAP_GUARD_GRACE_SECONDS)
 
 
+def checked_usage(usage):
+    assert isinstance(usage, dict), 'Native API did not report usage'
+    for key in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+        assert type(usage.get(key)) is int and usage[key] >= 0, f'Invalid usage.{key}'
+    assert usage['prompt_tokens'] > 0, 'Prompt token count must be positive'
+    assert usage['total_tokens'] == usage['prompt_tokens'] + usage['completion_tokens'], \
+        'Total tokens must equal input plus output; cached input is already included'
+    details = usage.get('prompt_tokens_details')
+    assert details is None or isinstance(details, dict), 'Invalid prompt token details'
+    cached = details.get('cached_tokens') if details is not None else None
+    if cached is not None:
+        assert type(cached) is int and 0 <= cached <= usage['prompt_tokens'], \
+            'Invalid usage.prompt_tokens_details.cached_tokens'
+    return cached
+
+
 class Client:
     def __init__(self, release):
         self.release = json.loads((release / 'release.json').read_text())
@@ -90,6 +106,7 @@ class Client:
             body = body | {'stream': True, 'stream_options': {'include_usage': True}}
             done = False
             usage = None
+            usage_events = 0
             with self.open('/v1/chat/completions', body) as response:
                 for line in response:
                     if not line.startswith(b'data: '):
@@ -99,7 +116,8 @@ class Client:
                         done = True
                         break
                     event = json.loads(data)
-                    if event.get('usage'):
+                    if event.get('usage') is not None and not event.get('choices'):
+                        usage_events += 1
                         usage = event['usage']
                     for choice in event.get('choices', []):
                         delta = choice.get('delta', {})
@@ -120,7 +138,7 @@ class Client:
                             function = call.get('function') or {}
                             current['function']['name'] += function.get('name') or ''
                             current['function']['arguments'] += function.get('arguments') or ''
-            assert done and usage is not None, 'Stream missing DONE or usage'
+            assert done and usage_events == 1, 'Stream must have one final usage event and DONE'
             message = {'role': 'assistant', 'content': content, 'reasoning': reasoning}
             if streamed_calls:
                 message['tool_calls'] = [streamed_calls[index] for index in sorted(streamed_calls)]
@@ -130,8 +148,10 @@ class Client:
             content = result['choices'][0]['message'].get('content') or ''
         elapsed = time.monotonic() - started
         usage = result['usage']
+        cached = checked_usage(usage)
         record = {'case': label, 'requested_output_tokens': body['max_tokens'],
                   'prompt_tokens': usage['prompt_tokens'], 'generated_tokens': usage['completion_tokens'],
+                  'total_tokens': usage['total_tokens'], 'cached_prompt_tokens': cached,
                   'latency_seconds': elapsed, 'ttft_seconds': first - started if first else None,
                   'decode_tokens_per_second': ((usage['completion_tokens'] - 1) / (time.monotonic() - first)
                                                if first and usage['completion_tokens'] > 1 else None),
@@ -221,6 +241,21 @@ def cancellation(c, messages=None, max_tokens=None):
 
 def api(c):
     smoke(c)
+    cache_report = c.release['identity']['config'].get(
+        'enable-prompt-tokens-details' if c.policy['engine'] == 'vllm' else 'enable-cache-report', False)
+    if cache_report:
+        # The shared, formatted prefix spans many cache blocks. Keep requests sequential.
+        prefix = ''.join(f'Archive entry {n}: cedar quartz river copper.\n' for n in range(80))
+        body = c.body(messages=[{'role': 'system', 'content': prefix},
+                                {'role': 'user', 'content': 'Summarize this archive in one sentence.'}],
+                      max_tokens=32)
+        warm = c.generate('cache-warmup', body)
+        repeated = c.generate('cache-repeat', body, stream=True)
+        assert warm['usage']['prompt_tokens'] == repeated['usage']['prompt_tokens'], \
+            'Repeated request changed formatted prompt length'
+        cached = checked_usage(repeated['usage'])
+        assert cached is not None, 'Native API did not report cached input tokens'
+        assert cached > 0, 'Repeated long prefix did not produce a reported cache hit'
     result = c.generate('chinese', c.body('请用中文简短介绍你可以如何帮助编程。'))
     text = result['choices'][0]['message'].get('content') or ''
     assert any('\u4e00' <= ch <= '\u9fff' for ch in text)

@@ -9,15 +9,16 @@ import yaml
 MODEL_KEYS = {'model', 'revision', 'tokenizer-revision', 'served-model-name',
               'tensor-parallel-size', 'max-model-len', 'max-num-seqs', 'gpu-memory-utilization',
               'max-num-batched-tokens', 'enable-chunked-prefill', 'enable-prefix-caching',
+              'enable-prompt-tokens-details',
               'dtype', 'kv-cache-dtype', 'tokenizer-mode', 'language-model-only', 'reasoning-parser',
               'tool-call-parser', 'enable-auto-tool-choice', 'default-chat-template-kwargs',
               'generation-config', 'override-generation-config', 'enable-log-requests',
               'enable-log-outputs', 'disable-uvicorn-access-log', 'enforce-eager',
               'enable-flashinfer-autotune', 'load-format', 'attention-backend',
               'diffusion-config', 'speculative-config', 'middleware'}
-OPTIONAL_KEYS = {'enable-flashinfer-autotune', 'enforce-eager', 'load-format', 'tokenizer-mode',
+OPTIONAL_KEYS = {'enable-prompt-tokens-details', 'enable-flashinfer-autotune', 'enforce-eager', 'load-format', 'tokenizer-mode',
                  'attention-backend', 'diffusion-config', 'speculative-config', 'middleware'}
-BOOL_KEYS = {'enable-chunked-prefill', 'enable-prefix-caching', 'language-model-only',
+BOOL_KEYS = {'enable-chunked-prefill', 'enable-prefix-caching', 'enable-prompt-tokens-details', 'language-model-only',
              'enable-auto-tool-choice', 'enable-log-requests', 'enable-log-outputs',
              'disable-uvicorn-access-log', 'enforce-eager'}
 RESPONSE_MIDDLEWARE = 'vllm_response_compat.ResponsesMessageMiddleware'
@@ -102,13 +103,23 @@ def probe_command(pinned):
             pinned, '-c', code]
 
 
-def validate_help(help_text, native, metadata):
+def rust_probe_command(pinned):
+    return ['docker', 'run', '--rm', '--entrypoint',
+            '/usr/local/lib/python3.12/dist-packages/vllm/vllm-rs',
+            pinned, 'serve', '--help']
+
+
+def validate_help(help_text, native, metadata, rust_help=None):
     for key in native.keys() | {'host', 'port', 'shutdown-timeout'}:
         if '--' + key not in help_text:
             raise RuntimeError(f'Candidate vLLM runtime does not support --{key}')
     for feature in metadata['required-runtime-features']:
         if feature not in help_text:
             raise RuntimeError(f'Candidate vLLM runtime does not provide {feature}')
+    if rust_help is not None and native.get('enable-prompt-tokens-details'):
+        implemented = rust_help.split('Options not implemented in Rust frontend yet:')[0]
+        if '--enable-prompt-tokens-details' not in implemented:
+            raise RuntimeError('Candidate vLLM Rust frontend does not support prompt token details')
 
 
 def render(native, snapshot, host, authenticated=False, auxiliary_models=None,

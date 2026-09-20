@@ -10,12 +10,17 @@ MODEL_KEYS = {'model-path', 'revision', 'tokenizer-revision', 'served-model-name
               'kv-cache-dtype',
               'chunked-prefill-size', 'ple-offload-embedding', 'ple-offload-backend',
               'ple-offload-dir', 'moe-runner-backend', 'fp4-gemm-backend', 'page-size',
-              'max-mamba-cache-size', 'reasoning-parser', 'tool-call-parser', 'trust-remote-code'}
+              'max-mamba-cache-size', 'reasoning-parser', 'tool-call-parser', 'trust-remote-code',
+              'enable-cache-report'}
+OPTIONAL_KEYS = {'enable-cache-report'}
+BOOL_KEYS = {'ple-offload-embedding', 'trust-remote-code', 'enable-cache-report'}
 
 
 def validate(native, metadata):
-    if set(native) != MODEL_KEYS:
+    if set(native) - OPTIONAL_KEYS != MODEL_KEYS - OPTIONAL_KEYS or set(native) - MODEL_KEYS:
         raise RuntimeError('sglang.yaml has missing or unknown settings')
+    if any(type(native[key]) is not bool for key in BOOL_KEYS if key in native):
+        raise RuntimeError('SGLang boolean settings must be YAML booleans')
     if not re.fullmatch(r'[0-9a-f]{40}', str(native['revision'])) or native['tokenizer-revision'] != native['revision']:
         raise RuntimeError('Model and tokenizer revisions must be the same full commit')
     for key in ('tp-size', 'context-length', 'max-running-requests', 'max-total-tokens', 'chunked-prefill-size',

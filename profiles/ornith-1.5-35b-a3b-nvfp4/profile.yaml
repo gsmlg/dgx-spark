@@ -1,0 +1,14 @@
+schema-version: 1
+id: ornith-1.5-35b-a3b-nvfp4
+engine: vllm
+display-name: Ornith 1.5 35B-A3B NVFP4
+text-only: false
+reasoning-default: true
+reasoning-toggle: true
+reasoning-fields: [reasoning, reasoning_content]
+tool-support: true
+context-tokens: 262144
+max-running-requests: 1
+runtime-environment: {}
+required-runtime-features: [qwen3, qwen3_xml]
+derived-cache: null

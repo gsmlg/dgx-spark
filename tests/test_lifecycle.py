@@ -132,7 +132,8 @@ class ConfigurationTests(unittest.TestCase):
                                       'gpt-oss-120b-mxfp4', 'muse-glimmer-30b-nvfp4',
                                       'gemma-4-26b-a4b-nvfp4',
                                       'mistral-small-4-119b-2603-nvfp4',
-                                      'diffusiongemma-26b-a4b-it-nvfp4'})
+                                      'diffusiongemma-26b-a4b-it-nvfp4',
+                                      'ornith-1.5-35b-a3b-nvfp4'})
         host = {'BIND_HOST': '127.0.0.1', 'PORT': 8000, 'SHUTDOWN_TIMEOUT': 300}
         for profile in loaded.values():
             adapter = lc.ADAPTERS[profile['engine']]
@@ -494,6 +495,29 @@ class ConfigurationTests(unittest.TestCase):
         self.assertFalse(profile['metadata']['reasoning-default'])
         self.assertTrue(profile['metadata']['reasoning-toggle'])
         self.assertEqual(profile['metadata']['reasoning-control'], 'reasoning-effort')
+        self.assertNotIn('speculative-config', native)
+
+    def test_ornith_1_5_profile_pins_multimodal_nvfp4_runtime(self):
+        profile = lc.profiles.load(lc.ROOT, 'ornith-1.5-35b-a3b-nvfp4')
+        native = profile['native']
+        self.assertEqual(native['model'], 'ornith-ai/Ornith-1.5-35B-A3B-NVFP4')
+        self.assertEqual(native['revision'], '94e431d9cc47fa1986a7a1a4e9a80f7f118b03aa')
+        self.assertEqual(native['tokenizer-revision'], native['revision'])
+        self.assertEqual(native['max-model-len'], 262144)
+        self.assertEqual(native['max-num-seqs'], 1)
+        self.assertEqual(native['gpu-memory-utilization'], 0.70)
+        self.assertEqual(native['kv-cache-dtype'], 'fp8')
+        self.assertEqual(native['reasoning-parser'], 'qwen3')
+        self.assertEqual(native['tool-call-parser'], 'qwen3_xml')
+        self.assertTrue(native['enable-auto-tool-choice'])
+        self.assertFalse(profile['metadata']['text-only'])
+        self.assertFalse(native['language-model-only'])
+        self.assertTrue(profile['metadata']['reasoning-default'])
+        self.assertTrue(profile['metadata']['reasoning-toggle'])
+        self.assertEqual(native['default-chat-template-kwargs'], {'enable_thinking': True})
+        self.assertEqual(native['override-generation-config'], {
+            'temperature': 0.6, 'top_p': 0.95, 'top_k': 20})
+        self.assertNotIn('VLLM_USE_RUST_FRONTEND', profile['metadata']['runtime-environment'])
         self.assertNotIn('speculative-config', native)
 
     def test_diffusiongemma_profile_pins_dgx_spark_diffusion_runtime(self):

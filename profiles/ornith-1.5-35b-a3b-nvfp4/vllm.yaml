@@ -1,0 +1,29 @@
+model: ornith-ai/Ornith-1.5-35B-A3B-NVFP4
+# Resolved from the Hub on 2026-09-20. Updates are explicit profile edits.
+revision: 94e431d9cc47fa1986a7a1a4e9a80f7f118b03aa
+tokenizer-revision: 94e431d9cc47fa1986a7a1a4e9a80f7f118b03aa
+served-model-name: local-assistant
+tensor-parallel-size: 1
+max-model-len: 262144
+max-num-seqs: 1
+gpu-memory-utilization: 0.70
+max-num-batched-tokens: 4096
+enable-chunked-prefill: true
+enable-prefix-caching: true
+enable-prompt-tokens-details: true
+dtype: auto
+kv-cache-dtype: fp8
+language-model-only: false
+reasoning-parser: qwen3
+tool-call-parser: qwen3_xml
+enable-auto-tool-choice: true
+default-chat-template-kwargs:
+  enable_thinking: true
+generation-config: vllm
+override-generation-config:
+  temperature: 0.6
+  top_p: 0.95
+  top_k: 20
+enable-log-requests: false
+enable-log-outputs: false
+disable-uvicorn-access-log: true

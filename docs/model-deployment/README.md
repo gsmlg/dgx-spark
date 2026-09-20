@@ -1,7 +1,8 @@
 # Additional model profiles
 
 **Repository:** `gsmlg/dgx-spark`  
-**Date:** 2026-09-10  
+**Date:** 2026-09-20
+
 **Status:** Profile switching and the candidate profiles are implemented; target-host preparation and qualification remain release-specific.
 
 ## Decision
@@ -17,6 +18,7 @@ Extend the existing single-service lifecycle rather than add independent Docker 
 | `diffusiongemma-26b-a4b-it-nvfp4` | vLLM | `nvidia/diffusiongemma-26B-A4B-it-NVFP4` | 262,144 combined tokens, eight scheduled diffusion requests |
 | `mistral-small-4-119b-2603-nvfp4` | vLLM | `mistralai/Mistral-Small-4-119B-2603-NVFP4` | 262,144 combined tokens, one scheduled multimodal request |
 | `muse-glimmer-30b-nvfp4` | vLLM + DFlash | `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` + pinned DFlash assistant | 131,072 combined tokens, up to 32 scheduled multimodal requests |
+| `ornith-1.5-35b-a3b-nvfp4` | vLLM | `ornith-ai/Ornith-1.5-35B-A3B-NVFP4` | 262,144 combined tokens, one scheduled multimodal request |
 | `qwen38-flash-next-nvfp4` | SGLang | `nvidia/Qwen3.8-Flash-Next-NVFP4` | 32,768 combined tokens, one scheduled request, file-backed PLE |
 
 These are configured starting targets, not measured capacities. The checkpoint/runtime evidence and limitations are in the individual model guides. Every profile requires qualification of its exact release.
@@ -35,6 +37,7 @@ These are configured starting targets, not measured capacities. The checkpoint/r
 | [models/diffusiongemma-26b-a4b-it-nvfp4.md](models/diffusiongemma-26b-a4b-it-nvfp4.md) | DiffusionGemma artifact pin, canvas policy, multimodal behavior and qualification boundary |
 | [models/mistral-small-4-119b-2603-nvfp4.md](models/mistral-small-4-119b-2603-nvfp4.md) | Mistral artifact pin, single-Spark policy, multimodal and reasoning contract |
 | [models/muse-glimmer-30b-nvfp4.md](models/muse-glimmer-30b-nvfp4.md) | Muse artifact pin, multimodal contract, parsers and qualification boundary |
+| [models/ornith-1.5-35b-a3b-nvfp4.md](models/ornith-1.5-35b-a3b-nvfp4.md) | Ornith artifact pin, multimodal reasoning/tool policy and qualification boundary |
 | [models/qwen38-flash-next.md](models/qwen38-flash-next.md) | Flash-Next artifact selection, SGLang, NVMe PLE lifecycle and qualification |
 | [sources.md](sources.md) | Primary sources, repository evidence and unresolved verification gates |
 
@@ -45,8 +48,9 @@ dynamic qualification budgets, and the candidate profile directories. The model 
 pinned; `prepare` resolves each candidate image to an immutable ARM64 digest and checks
 its runtime features before downloading the checkpoint.
 
-Read `design.md`, then use the model guides. No new model weights or runtime images have
-been pulled and no target-host GPU qualification is claimed by the source implementation.
+Read `design.md`, then use the model guides. Ornith release
+`af366d840c1b6ae81a5ecd3b` has been prepared and passed startup smoke on the target
+GB10 host. No other candidate gains target-host qualification from the source changes.
 
 ## Token usage and prefix-cache verification
 
@@ -77,12 +81,13 @@ then switch during a planned window with
 `bin/spark-llm test --mode api`. Preparation
 alone does not change the running release.
 
-Verification on 2026-09-17: all nine profiles passed local validation and all
-39 unit tests passed. The locally available vLLM v0.28.0, `gemma`, and
+Verification on 2026-09-20: all ten profiles passed local validation and all
+40 unit tests passed. The locally available vLLM v0.28.0, `gemma`, and
 `nightly-20260704` candidate images contain the Python CLI option and native
 Chat Completions cache-usage implementation; the Gemma candidate's Rust help
 also lists its own `--enable-prompt-tokens-details` option. The locally
 available `dev-qwen38-next-local` SGLang image contains the cache-report
-option and usage implementation. No new release was prepared or started for
-this change, so real API cache hits, streaming responses, and `/metrics` on
-the new releases remain unverified.
+option and usage implementation. Ornith release `af366d840c1b6ae81a5ecd3b`
+passed startup smoke, including streaming and a tool-call round trip, after its
+memory allocation was reduced to preserve the host guardrail. Its full API suite,
+real cache hits, `/metrics`, 262K execution and release qualification remain pending.

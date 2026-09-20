@@ -1,7 +1,7 @@
 # Spark LLM
 
 One native ARM64 inference service, exposed as `local-assistant`, with safe switching
-between nine model profiles. Only one model is resident at a time.
+between ten model profiles. Only one model is resident at a time.
 
 | Profile | Engine | Checkpoint | Initial combined context |
 |---|---|---|---:|
@@ -13,10 +13,11 @@ between nine model profiles. Only one model is resident at a time.
 | `diffusiongemma-26b-a4b-it-nvfp4` | vLLM | `nvidia/diffusiongemma-26B-A4B-it-NVFP4` | 262,144 |
 | `mistral-small-4-119b-2603-nvfp4` | vLLM | `mistralai/Mistral-Small-4-119B-2603-NVFP4` | 262,144 |
 | `muse-glimmer-30b-nvfp4` | vLLM + DFlash | `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` | 131,072 |
+| `ornith-1.5-35b-a3b-nvfp4` | vLLM | `ornith-ai/Ornith-1.5-35B-A3B-NVFP4` | 262,144 |
 | `qwen38-flash-next-nvfp4` | SGLang | `nvidia/Qwen3.8-Flash-Next-NVFP4` | 32,768 |
 
 **Configured capacity is not qualified capacity.** Check status and reports for actual results.
-All nine profiles explicitly request FP8 KV cache. vLLM profiles use `fp8` or
+All ten profiles explicitly request FP8 KV cache. vLLM profiles use `fp8` or
 `fp8_e4m3`; the SGLang Flash-Next profile uses `fp8_e4m3` because its pinned
 runtime does not accept the `fp8` alias. Existing prepared releases retain their
 frozen settings until each profile is prepared again. FP8 startup, capacity and
@@ -126,7 +127,7 @@ reports the full-attention KV pool). `enable-cache-report` controls per-request
 API usage and does not turn on `/metrics`. Neither a service-wide cache ratio nor
 KV occupancy is the per-request `cached_tokens` count.
 
-Qwen3.8 27B, Muse Glimmer, Gemma 4, DiffusionGemma and Mistral Small 4 accept
+Qwen3.8 27B, Muse Glimmer, Gemma 4, DiffusionGemma, Mistral Small 4 and Ornith 1.5 accept
 text and image inputs through Chat Completions after their respective multimodal
 releases pass API validation. The other profiles accept text input only; video,
 audio, Responses API and embeddings remain outside the qualified scope.
@@ -145,7 +146,10 @@ returned reasoning/tool history and see the model-specific guide before switchin
 Mistral Small 4 instead uses the top-level `reasoning_effort` request field: `none` is
 the default and `high` enables reasoning; use temperature 0.7 with `high`. DiffusionGemma
 uses the Gemma toggle but defaults thinking on because tool calling is more reliable in
-that mode. Its 256-token denoising canvas raises time to first token.
+that mode. Its 256-token denoising canvas raises time to first token. Ornith 1.5 also
+defaults thinking on; clients can disable it with
+`chat_template_kwargs: {"enable_thinking": false}`. Its configured general-task defaults
+are temperature 0.6, top-p 0.95 and top-k 20.
 
 Always specify `max_tokens`. The suggested client default is 4,096; it is not a
 server-wide output cap. For the 262,144-token profiles, a 16,384 output reservation is
@@ -191,6 +195,11 @@ bin/spark-llm start --profile mistral-small-4-119b-2603-nvfp4
 bin/spark-llm download --profile muse-glimmer-30b-nvfp4
 bin/spark-llm prepare --profile muse-glimmer-30b-nvfp4
 bin/spark-llm start --profile muse-glimmer-30b-nvfp4
+
+# Prepare and switch to multimodal Ornith 1.5 35B-A3B NVFP4.
+bin/spark-llm download --profile ornith-1.5-35b-a3b-nvfp4
+bin/spark-llm prepare --profile ornith-1.5-35b-a3b-nvfp4
+bin/spark-llm start --profile ornith-1.5-35b-a3b-nvfp4
 
 # Switch to Flash-Next after preparing its SGLang image, checkpoint, and PLE data.
 bin/spark-llm download --profile qwen38-flash-next-nvfp4

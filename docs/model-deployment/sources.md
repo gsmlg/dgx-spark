@@ -1,6 +1,6 @@
 # Sources and verification boundaries
 
-**Reviewed:** 2026-09-15. Sources are primary project/model documentation and repository code. Upstream pages are mutable; re-resolve revisions before implementation. Short identifiers below are citation keys used throughout this package.
+**Reviewed:** 2026-09-20. Sources are primary project/model documentation and repository code. Upstream pages are mutable; re-resolve revisions before implementation. Short identifiers below are citation keys used throughout this package.
 
 ## Repository evidence
 
@@ -131,6 +131,24 @@ The Hub revision was resolved on 2026-09-15. The publisher's example uses two GP
 with TP1, one sequence and a 4,096-token batch for the single-GPU DGX Spark. That
 adaptation, the v0.28.0 ARM64 image, 262K capacity, parsers, multimodal path, memory
 headroom and performance all remain candidate settings until preparation and host tests.
+
+## Ornith 1.5 sources
+
+| Key | Source | Used for |
+|---|---|---|
+| O1 | [Official Ornith 1.5 35B-A3B model card](https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B) | Architecture, runtime minimums, native context, multimodal behavior, parsers, sampling and long-context warning |
+| O2 | [Pinned official NVFP4 checkpoint configuration](https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-NVFP4/blob/94e431d9cc47fa1986a7a1a4e9a80f7f118b03aa/config.json) | Qwen3.5-MoE architecture, vision encoder, native context and ModelOpt mixed NVFP4/FP8 metadata |
+| O3 | [Pinned official chat template](https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-NVFP4/blob/94e431d9cc47fa1986a7a1a4e9a80f7f118b03aa/chat_template.jinja) | Thinking toggle, reasoning history, multimodal markers and XML tool-call format |
+| O4 | [vLLM 0.28.0 release](https://github.com/vllm-project/vllm/releases/tag/v0.28.0) | Selected runtime release identity; exact ARM64 image digest remains preparation-time evidence |
+
+The official NVFP4 repository revision was resolved from the Hub on 2026-09-20. Its
+model card currently repeats serving commands for the BF16 repository, so artifact
+selection comes from the explicit NVFP4 repository while behavioral settings come from
+the base model card and the pinned NVFP4 config/template. Target-host release
+`af366d840c1b6ae81a5ecd3b` proves that the pinned checkpoint loads on GB10 and that
+health, streaming and a tool-call round trip pass. The selected vLLM path uses Marlin
+weight-only FP4 rather than native FP4 compute. The 262K target, full API suite,
+multimodal path, output quality and performance remain unqualified.
 
 ## Hardware
 

@@ -39,6 +39,7 @@ These are configured starting targets, not measured capacities. The checkpoint/r
 | [models/muse-glimmer-30b-nvfp4.md](models/muse-glimmer-30b-nvfp4.md) | Muse artifact pin, multimodal contract, parsers and qualification boundary |
 | [models/ornith-1.5-35b-a3b-nvfp4.md](models/ornith-1.5-35b-a3b-nvfp4.md) | Ornith artifact pin, multimodal reasoning/tool policy and qualification boundary |
 | [models/qwen38-flash-next.md](models/qwen38-flash-next.md) | Flash-Next artifact selection, SGLang, NVMe PLE lifecycle and qualification |
+| [models/qwen38-flash-next-fp4-local-b12x.md](models/qwen38-flash-next-fp4-local-b12x.md) | Experimental FP4-Local checkpoint, pinned ARM64 B12X image, disk PLE and staged 128K/256K qualification |
 | [sources.md](sources.md) | Primary sources, repository evidence and unresolved verification gates |
 
 ## Applying this documentation

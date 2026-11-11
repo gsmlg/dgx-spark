@@ -59,6 +59,28 @@ PR #37068 was reported merged into `qwen4-main-squashed`, merge commit `3a09f089
 
 **Reasoning/sampling conflict:** the Qwen model card documents thinking controls and sampling guidance, but sections of the SGLang cookbook describe always-on reasoning and say sampling recommendations are unavailable. Resolve behavior against the pinned template and actual engine tests. Unsupported modes are recorded explicitly, not silently emulated or reported as passed.
 
+## Flash-Next FP4-Local / B12X sources
+
+**Reviewed:** 2026-10-23. This is a separate checkpoint/runtime from Q1-Q7 above.
+
+| Key | Source | Used for |
+|---|---|---|
+| F1 | [NVIDIA FP4-Local model card](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-FP4-Local/blob/b9ce18a6887e18c089fdea8509a33e63429a3300/README.md) | QAD FP4 1.0, October 5 release, 96 GiB size, compressed-scale loader requirement, Spark command, PLE and KV-capacity boundary |
+| F2 | [Community single-Spark recipe](https://github.com/eugr/spark-vllm-docker/blob/main/recipes/qwen3.8-flash-next-nvfp4-solo.yaml) | TP1, disk/io_uring, SM121, B12X kernels, native 262K, eight scheduler slots and built-in MTP |
+| F3 | [NVIDIA community deployment discussion](https://forums.developer.nvidia.com/t/nvidia-official-qwen3-8-flash-next-checkpoint-for-single-dgx-spark/385994) | Community context; the supplied 66.2/166.4 tok/s figures were not independently reproduced or verified from the retrieved excerpt |
+| F4 | [Community memory-spike report #388](https://github.com/eugr/spark-vllm-docker/issues/388) | Reported one-Spark transient loader/autotuning memory failures, including the October 15 digest; not a diagnosis of this host |
+| F5 | [B12X PLE implementation at 8244d1c](https://github.com/local-inference-lab/vllm/blob/8244d1c44348ae8a5bbfc9f1b607021652283ed4/vllm/models/qwen4_exp/nvidia/b12x_ple.py) | DiskTable file-source paths and offsets; read-only checkpoint-backed PLE contract to verify in the pinned image |
+| F6 | [Docker Hub nightly metadata](https://hub.docker.com/v2/repositories/eugr/spark-vllm-b12x/tags/nightly-20261015) | Live linux/arm64 digest resolution; image config reports CUDA 13.0.2 |
+
+The source profile pins digest
+`sha256:03a956544e9f9b4b7ba91690469fbe7848bdbef29a7d2e0f5788368467bb3595`
+and model revision `b9ce18a6887e18c089fdea8509a33e63429a3300`.
+Registry metadata and source review do not establish the installed engine/kernel
+versions or qualify execution on the host's unchanged R580 driver. Image transfer
+did not complete during integration, so preparation and all GPU/runtime gates remain
+pending. The mutable community recipe is supporting evidence, not an implicit
+permission to change either pin or apply startup patches.
+
 ## GPT-OSS sources
 
 | Key | Source | Used for |

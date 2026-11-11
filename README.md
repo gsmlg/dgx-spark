@@ -1,7 +1,7 @@
 # Spark LLM
 
 One native ARM64 inference service, exposed as `local-assistant`, with safe switching
-between ten model profiles. Only one model is resident at a time.
+between eleven model profiles. Only one model is resident at a time.
 
 | Profile | Engine | Checkpoint | Initial combined context |
 |---|---|---|---:|
@@ -15,13 +15,22 @@ between ten model profiles. Only one model is resident at a time.
 | `muse-glimmer-30b-nvfp4` | vLLM + DFlash | `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` | 131,072 |
 | `ornith-1.5-35b-a3b-nvfp4` | vLLM | `ornith-ai/Ornith-1.5-35B-A3B-NVFP4` | 262,144 |
 | `qwen38-flash-next-nvfp4` | SGLang | `nvidia/Qwen3.8-Flash-Next-NVFP4` | 32,768 |
+| `qwen38-flash-next-fp4-local-b12x` (experimental) | vLLM + B12X | `nvidia/Qwen3.8-Flash-Next-FP4-Local` | 262,144 |
 
 **Configured capacity is not qualified capacity.** Check status and reports for actual results.
-All ten profiles explicitly request FP8 KV cache. vLLM profiles use `fp8` or
+All eleven profiles explicitly request FP8 KV cache. vLLM profiles use `fp8` or
 `fp8_e4m3`; the SGLang Flash-Next profile uses `fp8_e4m3` because its pinned
 runtime does not accept the `fp8` alias. Existing prepared releases retain their
 frozen settings until each profile is prepared again. FP8 startup, capacity and
 output quality require profile-specific validation.
+
+The experimental [Flash-Next FP4-Local guide](docs/model-deployment/models/qwen38-flash-next-fp4-local-b12x.md)
+adds a separate, digest-pinned ARM64 B12X candidate with disk-backed PLE, FP8 KV,
+262,144-token combined context and eight scheduler slots. It keeps the R580 driver
+and existing SGLang profile. Its container uses the NVIDIA example's unconfined
+seccomp/AppArmor settings for this profile only; use an isolated test environment.
+Adding or preparing it does not switch the active model. Full-context concurrency,
+million-token inference and community performance figures are not local qualifications.
 
 Host validation on 2026-09-08: release `34d2325c4774623a9d1aef00` passed the
 CUDA probe, startup smoke and basic API suite on this GB10 host. Streaming,
@@ -71,8 +80,10 @@ The default cache is `/home/gao/.cache/huggingface/hub`. Docker can write this
 existing root-owned cache; the inference container mounts it read-only. Compilation
 artifacts use a separate persistent directory under `/home/gao/.cache/spark-llm`.
 Do not remove accepted release snapshots or pinned images if rollback is required.
-Preparation reserves 30 GiB for this snapshot, 60 GiB for image/cache/extraction,
-and a configurable 50 GiB free-space reserve on each relevant filesystem.
+Preparation reserves 30 GiB for the default snapshot, 60 GiB for image/cache/extraction,
+and a configurable 50 GiB free-space reserve on each relevant filesystem. Larger
+profiles can increase the artifact allowance with `prepare-storage-gib`; the
+FP4-Local/B12X profile uses 160 GiB, totaling 270 GiB with the example host settings.
 
 The original `v0.28.0-cu130` image alias returned `manifest unknown` during setup.
 The profile explicitly uses the published default CUDA 13.0 tag `v0.28.0` instead.
@@ -205,6 +216,13 @@ bin/spark-llm start --profile ornith-1.5-35b-a3b-nvfp4
 bin/spark-llm download --profile qwen38-flash-next-nvfp4
 bin/spark-llm prepare --profile qwen38-flash-next-nvfp4
 bin/spark-llm start --profile qwen38-flash-next-nvfp4
+
+# Stage the separate experimental B12X/FP4-Local deployment without switching.
+bin/spark-llm validate --profile qwen38-flash-next-fp4-local-b12x
+bin/spark-llm download --profile qwen38-flash-next-fp4-local-b12x
+bin/spark-llm prepare --profile qwen38-flash-next-fp4-local-b12x
+# Start only in an isolated test window after pausing clients.
+# bin/spark-llm start --profile qwen38-flash-next-fp4-local-b12x
 
 # Switch back to the existing/default profile.
 bin/spark-llm start --profile qwen38-27b-nvfp4

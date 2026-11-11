@@ -12,14 +12,20 @@ PROFILE_KEYS = {
     'context-tokens', 'max-running-requests', 'runtime-environment',
     'required-runtime-features', 'derived-cache',
 }
-OPTIONAL_PROFILE_KEYS = {'auxiliary-artifacts', 'auxiliary-models', 'reasoning-control'}
+OPTIONAL_PROFILE_KEYS = {'auxiliary-artifacts', 'auxiliary-models', 'reasoning-control',
+                         'prepare-storage-gib'}
 AUXILIARY_ARTIFACT_KEYS = {'name', 'url', 'sha256'}
 AUXILIARY_MODEL_KEYS = {'name', 'repository', 'revision'}
 DERIVED_CACHE_KEYS = {'kind', 'mount', 'minimum-free-gib', 'reset-before-start'}
 ENGINES = {'vllm': 'vllm.yaml', 'sglang': 'sglang.yaml'}
 RUNTIME_ENV_KEYS = {'MAX_JOBS', 'CUTE_DSL_ARCH', 'PYTORCH_CUDA_ALLOC_CONF',
                     'SGLANG_QWEN4_PLE_FILE_RSS_BUDGET_GB', 'TIKTOKEN_ENCODINGS_BASE',
-                    'VLLM_USE_RUST_FRONTEND', 'VLLM_USE_V2_MODEL_RUNNER'}
+                    'VLLM_USE_RUST_FRONTEND', 'VLLM_USE_V2_MODEL_RUNNER',
+                    'VLLM_PLE_TABLE_MEMORY', 'B12X_DISK_BACKEND', 'SAFETENSORS_FAST_GPU',
+                    'VLLM_WORKER_MULTIPROC_METHOD', 'VLLM_SSM_CONV_STATE_LAYOUT',
+                    'VLLM_USE_AOT_COMPILE', 'VLLM_USE_MEGA_AOT_ARTIFACT', 'B12X_POLICY_MODE',
+                    'VLLM_MXFP8_LM_HEAD', 'VLLM_B12X_MOE_FP4_LAYER_MAX_INPUT_SCALE',
+                    'VLLM_B12X_MOE_FP4_FORCE_A16', 'B12X_W4A16_A4_PREFILL'}
 
 
 class UniqueLoader(yaml.SafeLoader):
@@ -84,6 +90,9 @@ def load(root, profile_id=DEFAULT_PROFILE):
     for key in ('context-tokens', 'max-running-requests'):
         if type(metadata[key]) is not int or metadata[key] <= 0:
             raise RuntimeError(f'{key} must be a positive integer')
+    if 'prepare-storage-gib' in metadata and (type(metadata['prepare-storage-gib']) is not int
+                                             or metadata['prepare-storage-gib'] <= 0):
+        raise RuntimeError('prepare-storage-gib must be a positive integer')
     if not isinstance(metadata['reasoning-fields'], list) or not metadata['reasoning-fields']:
         raise RuntimeError('reasoning-fields must be a non-empty list')
     if not all(re.fullmatch(r'[a-z_][a-z0-9_]*', x or '') for x in metadata['reasoning-fields']):

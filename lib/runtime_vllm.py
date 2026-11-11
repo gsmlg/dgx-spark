@@ -6,6 +6,13 @@ import re
 import yaml
 
 
+B12X_SETTINGS = {
+    'pipeline-parallel-size': 1, 'mamba-cache-mode': 'align',
+    'quantization': 'modelopt_mixed', 'block-size': 16,
+    'gdn-decode-kernel': 'b12x', 'linear-backend': 'b12x', 'moe-backend': 'b12x',
+    'mm-encoder-tp-mode': 'data',
+    'compilation-config': {'pass_config': {'fuse_act_quant': True}},
+}
 MODEL_KEYS = {'model', 'revision', 'tokenizer-revision', 'served-model-name',
               'tensor-parallel-size', 'max-model-len', 'max-num-seqs', 'gpu-memory-utilization',
               'max-num-batched-tokens', 'enable-chunked-prefill', 'enable-prefix-caching',
@@ -15,12 +22,12 @@ MODEL_KEYS = {'model', 'revision', 'tokenizer-revision', 'served-model-name',
               'generation-config', 'override-generation-config', 'enable-log-requests',
               'enable-log-outputs', 'disable-uvicorn-access-log', 'enforce-eager',
               'enable-flashinfer-autotune', 'load-format', 'attention-backend',
-              'diffusion-config', 'speculative-config', 'middleware'}
+              'diffusion-config', 'speculative-config', 'middleware'} | B12X_SETTINGS.keys()
 OPTIONAL_KEYS = {'enable-prompt-tokens-details', 'enable-flashinfer-autotune', 'enforce-eager', 'load-format', 'tokenizer-mode',
-                 'attention-backend', 'diffusion-config', 'speculative-config', 'middleware'}
+                 'attention-backend', 'diffusion-config', 'speculative-config', 'middleware'} | B12X_SETTINGS.keys()
 BOOL_KEYS = {'enable-chunked-prefill', 'enable-prefix-caching', 'enable-prompt-tokens-details', 'language-model-only',
              'enable-auto-tool-choice', 'enable-log-requests', 'enable-log-outputs',
-             'disable-uvicorn-access-log', 'enforce-eager'}
+             'disable-uvicorn-access-log', 'enforce-eager', 'enable-flashinfer-autotune'}
 RESPONSE_MIDDLEWARE = 'vllm_response_compat.ResponsesMessageMiddleware'
 
 
@@ -46,8 +53,22 @@ def validate(native, metadata):
         raise RuntimeError('Native language-only mode must match the profile input policy')
     if native['enable-log-requests'] or native['enable-log-outputs']:
         raise RuntimeError('Prompt and output logs must be disabled')
-    if native.get('load-format') not in (None, 'fastsafetensors'):
+    if native.get('load-format') not in (None, 'fastsafetensors', 'b12x'):
         raise RuntimeError('Unsupported vLLM load format')
+    b12x = native.get('load-format') == 'b12x'
+    if b12x:
+        if any(native.get(key) != value or type(native.get(key)) is not type(value)
+               for key, value in B12X_SETTINGS.items()):
+            raise RuntimeError('Unsupported B12X runtime settings')
+        if native['dtype'] != 'bfloat16' or native['kv-cache-dtype'] != 'fp8' \
+                or native.get('enable-flashinfer-autotune') is not False:
+            raise RuntimeError('B12X requires BF16 activations, FP8 KV and disabled FlashInfer autotune')
+        if metadata['derived-cache'] is not None \
+                or metadata['runtime-environment'].get('VLLM_PLE_TABLE_MEMORY') != 'disk' \
+                or metadata['runtime-environment'].get('B12X_DISK_BACKEND') != 'io_uring':
+            raise RuntimeError('B12X requires checkpoint-backed disk PLE without a derived table')
+    elif native.keys() & B12X_SETTINGS.keys():
+        raise RuntimeError('B12X runtime settings require the B12X loader')
     if 'tokenizer-mode' in native and native['tokenizer-mode'] not in ('auto', 'hf', 'slow', 'mistral'):
         raise RuntimeError('Unsupported tokenizer mode')
     if 'middleware' in native and native['middleware'] != [RESPONSE_MIDDLEWARE]:
@@ -58,15 +79,22 @@ def validate(native, metadata):
         raise RuntimeError('Unsupported diffusion configuration')
     speculative = native.get('speculative-config')
     if speculative is not None:
-        if not isinstance(speculative, dict) or set(speculative) != {
-                'method', 'model', 'num_speculative_tokens'}:
+        if not isinstance(speculative, dict) or speculative.get('method') not in ('dflash', 'mtp'):
             raise RuntimeError('Invalid speculative decoding configuration')
-        if speculative['method'] != 'dflash' or type(speculative['num_speculative_tokens']) is not int \
-                or speculative['num_speculative_tokens'] <= 0:
+        keys = {'method', 'num_speculative_tokens'}
+        if speculative['method'] == 'dflash':
+            keys.add('model')
+        if set(speculative) != keys:
+            raise RuntimeError('Invalid speculative decoding configuration')
+        if type(speculative['num_speculative_tokens']) is not int or speculative['num_speculative_tokens'] <= 0:
             raise RuntimeError('Unsupported speculative decoding configuration')
-        names = {model['name'] for model in metadata.get('auxiliary-models', [])}
-        if speculative['model'] not in names:
-            raise RuntimeError('Speculative model must reference a pinned auxiliary model')
+        if speculative['method'] == 'mtp':
+            if not b12x:
+                raise RuntimeError('MTP requires the admitted B12X runtime')
+        else:
+            names = {model['name'] for model in metadata.get('auxiliary-models', [])}
+            if speculative['model'] not in names:
+                raise RuntimeError('Speculative model must reference a pinned auxiliary model')
     override = native['override-generation-config']
     if not isinstance(override, dict) or (
             'max_new_tokens' in override and override['max_new_tokens'] is not None):
@@ -97,7 +125,9 @@ def probe_command(pinned):
         "from vllm.model_executor.model_loader import LoadFormats; "
         "print('\\n'.join(LoadFormats.__args__)); "
         "from vllm.v1.attention.backends.registry import AttentionBackendEnum; "
-        "print('\\n'.join(item.name for item in AttentionBackendEnum))"
+        "print('\\n'.join(item.name for item in AttentionBackendEnum)); "
+        "from vllm.model_executor.layers.quantization import QUANTIZATION_METHODS; "
+        "print('\\n'.join(QUANTIZATION_METHODS))"
     )
     return ['docker', 'run', '--rm', '--gpus', 'all', '--entrypoint', 'python3',
             pinned, '-c', code]
@@ -127,7 +157,7 @@ def render(native, snapshot, host, authenticated=False, auxiliary_models=None,
     resolved = dict(native)
     files = ({'vllm_response_compat.py': Path(__file__).with_name('vllm_response_compat.py').read_text()}
              if RESPONSE_MIDDLEWARE in native.get('middleware', []) else {})
-    if 'speculative-config' in resolved:
+    if resolved.get('speculative-config', {}).get('method') == 'dflash':
         speculative = dict(resolved['speculative-config'])
         try:
             speculative['model'] = (auxiliary_models or {})[speculative['model']]
@@ -154,6 +184,21 @@ def render(native, snapshot, host, authenticated=False, auxiliary_models=None,
     environment = {'VLLM_API_KEY': '${VLLM_API_KEY:-}', 'VLLM_CACHE_ROOT': '/runtime-cache/vllm'}
     if files:
         environment['PYTHONPATH'] = '/release'
+    container_options = {}
+    cache_mounts = []
+    if native.get('load-format') == 'b12x':
+        # io_uring is blocked by Docker's default seccomp profile. Keep the
+        # model-card exceptions local to this experimental runtime.
+        container_options = {
+            'security_opt': ['seccomp=unconfined', 'apparmor=unconfined'],
+            'ulimits': {'memlock': {'soft': -1, 'hard': -1},
+                       'stack': {'soft': 67108864, 'hard': 67108864}},
+        }
+        # B12X and FlashInfer also use ~/.cache, independently of vLLM's cache
+        # root. Bind it to this release's runtime cache, never the host's home.
+        cache_mounts = ['/root/.cache']
+        environment['TRITON_CACHE_DIR'] = '/runtime-cache/triton'
     return {'config_name': 'vllm.yaml', 'config_text': yaml.safe_dump(resolved, sort_keys=False),
             'entrypoint': ['vllm', 'serve'], 'command': command,
-            'resolved': resolved, 'files': files, 'environment': environment}
+            'resolved': resolved, 'files': files, 'environment': environment,
+            'container_options': container_options, 'cache_mounts': cache_mounts}

@@ -263,6 +263,10 @@ def render_compose(runtime, metadata):
     }
     if runtime['entrypoint']:
         service['entrypoint'] = runtime['entrypoint']
+    service.update(runtime.get('container_options', {}))
+    for target in runtime.get('cache_mounts', []):
+        service['volumes'].append({'type': 'bind', 'source': '${RUNTIME_CACHE_DIR:?}',
+                                   'target': target})
     if metadata['derived-cache']:
         service['volumes'].append({'type': 'bind', 'source': '${PLE_CACHE_DIR:?}',
                                    'target': metadata['derived-cache']['mount']})
@@ -275,6 +279,7 @@ def check_disk_capacity(host, metadata):
         while not parent.exists():
             parent = parent.parent
         extra = metadata['derived-cache']['minimum-free-gib'] if metadata['derived-cache'] else 30
+        extra = max(extra, metadata.get('prepare-storage-gib', 0))
         reserve = (host['DISK_RESERVE_GIB'] + host['PREPARE_OVERHEAD_GIB'] + extra) * 2**30
         if shutil.disk_usage(parent).free < reserve:
             fail(f'Insufficient disk reserve at {parent}')

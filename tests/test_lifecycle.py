@@ -129,6 +129,7 @@ class ConfigurationTests(unittest.TestCase):
                   for row in lc.profiles.list_profiles(lc.ROOT)}
         self.assertEqual(set(loaded), {'qwen38-27b-nvfp4', 'laguna-s-2.1-nvfp4',
                                       'laguna-xs-2.1-nvfp4', 'qwen38-flash-next-nvfp4',
+                                      'qwen38-flash-next-fp4-local-b12x',
                                       'gpt-oss-120b-mxfp4', 'muse-glimmer-30b-nvfp4',
                                       'gemma-4-26b-a4b-nvfp4',
                                       'mistral-small-4-119b-2603-nvfp4',

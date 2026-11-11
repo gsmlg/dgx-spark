@@ -1,0 +1,47 @@
+model: nvidia/Qwen3.8-Flash-Next-FP4-Local
+# Full checkpoint and tokenizer revision resolved from the Hub on 2026-10-23.
+revision: b9ce18a6887e18c089fdea8509a33e63429a3300
+tokenizer-revision: b9ce18a6887e18c089fdea8509a33e63429a3300
+served-model-name: local-assistant
+tensor-parallel-size: 1
+pipeline-parallel-size: 1
+max-model-len: 262144
+max-num-seqs: 8
+gpu-memory-utilization: 0.80
+max-num-batched-tokens: 4096
+enable-chunked-prefill: true
+enable-prefix-caching: true
+enable-prompt-tokens-details: true
+dtype: bfloat16
+kv-cache-dtype: fp8
+language-model-only: true
+quantization: modelopt_mixed
+load-format: b12x
+block-size: 16
+mamba-cache-mode: align
+gdn-decode-kernel: b12x
+linear-backend: b12x
+moe-backend: b12x
+mm-encoder-tp-mode: data
+enable-flashinfer-autotune: false
+# Built-in MTP from the same pinned checkpoint; no external draft model.
+# NVIDIA's Spark example uses K=4; the reported community benchmark used K=3.
+speculative-config:
+  method: mtp
+  num_speculative_tokens: 4
+compilation-config:
+  pass_config:
+    fuse_act_quant: true
+reasoning-parser: qwen3
+tool-call-parser: qwen3_xml
+enable-auto-tool-choice: true
+default-chat-template-kwargs:
+  enable_thinking: true
+generation-config: vllm
+override-generation-config:
+  temperature: 1.0
+  top_p: 0.95
+  top_k: 20
+enable-log-requests: false
+enable-log-outputs: false
+disable-uvicorn-access-log: true

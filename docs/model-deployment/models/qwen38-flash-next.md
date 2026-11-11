@@ -4,6 +4,10 @@
 **Proposed profile:** `qwen38-flash-next-nvfp4`  
 **State:** Experimental integration; host qualification pending.
 
+A separate 2026-10-23 [FP4-Local/B12X profile](qwen38-flash-next-fp4-local-b12x.md)
+now targets the newer NVIDIA compressed-scale checkpoint at 262,144 tokens.
+This guide and the original SGLang profile retain their own artifact and runtime pins.
+
 ## 1. This is not the existing Qwen 27B profile
 
 The official open-weight model is `Qwen/Qwen3.8-Flash-Next`. Its model card describes 125B language-model parameters with 6B activated, an additional 51B n-gram embedding table and a 4B MTP component. It uses Gated DeltaNet and Qwen Sparse Attention and advertises 262,144 native context. Activated parameter count does not determine weight residency. [Q1](../sources.md)

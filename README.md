@@ -112,6 +112,23 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 Add an Authorization bearer header if a key is configured. Tools execute in your
 client, after inspecting the returned tool call. The service does not run tools.
 
+To forward the API to `vultr-01`, copy `tunnel.env.example` to `tunnel.env` and
+configure passwordless SSH access from this host (`ssh vultr-01 true`). After
+startup readiness and smoke generation, the lifecycle starts a background reverse
+tunnel equivalent to `ssh -fNT -R 127.0.0.1:8000:127.0.0.1:8000 vultr-01`.
+On Vultr, use `http://127.0.0.1:8000/v1`; the remote listener is loopback-only.
+The target uses the running release's actual bind address and API port. Set
+`SSH_HOST` (also accepts `user@host`) and `REMOTE_PORT` in `tunnel.env`; SSH keys
+and connection options come from the host's normal `~/.ssh/config`.
+This host-side setting also works with existing immutable releases.
+
+`status` reports `ssh_tunnel`, and `stop`, `restart` and model switches close the
+owned tunnel. SSH failures warn without stopping local inference. Keepalives
+detect a broken connection; rerun `start --release <active-id>` to reconnect
+without restarting the model. SSH does not reconnect automatically. New host keys
+are recorded with `StrictHostKeyChecking=accept-new`; changed keys are rejected.
+Remove `tunnel.env` or empty `SSH_HOST` and rerun start to disable forwarding.
+
 In a non-streaming Chat Completions response, read `usage.prompt_tokens` (formatted
 input), `usage.completion_tokens` (output), and `usage.total_tokens` (their sum).
 For streaming, read the **single final usage event** before `[DONE]`; earlier chunks

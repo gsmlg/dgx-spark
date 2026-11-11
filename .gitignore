@@ -1,5 +1,6 @@
 host.env
 secrets.env
+tunnel.env
 state/
 reports/
 __pycache__/

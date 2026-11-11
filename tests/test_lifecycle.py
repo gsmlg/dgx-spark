@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 import tempfile
 import unittest
@@ -675,6 +676,70 @@ class ConfigurationTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 lc.replace('bad', {})
             stop.assert_not_called()
+
+
+class SSHTunnelTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.root_patch = patch.object(lc, 'ROOT', self.root)
+        self.state_patch = patch.object(lc, 'STATE', self.root / 'state')
+        self.root_patch.start()
+        self.state_patch.start()
+        self.addCleanup(self.root_patch.stop)
+        self.addCleanup(self.state_patch.stop)
+        (self.root / 'tunnel.env').write_text('SSH_HOST=vultr-01\nREMOTE_PORT=8000\n')
+        self.record = {'identity': {'host': {'BIND_HOST': '127.0.0.2', 'PORT': 9000}}}
+
+    def test_forward_uses_running_release_and_is_idempotent(self):
+        statuses = [{'running': False}, {'running': True}]
+        with patch.object(lc, 'tunnel_status', side_effect=statuses), \
+             patch.object(lc, 'stop_tunnel'), \
+             patch.object(lc.subprocess, 'run', return_value=SimpleNamespace(returncode=0)) as run:
+            lc.start_tunnel(self.record)
+        args = run.call_args.args[0]
+        self.assertEqual(args[args.index('-R') + 1], '127.0.0.1:8000:127.0.0.2:9000')
+        self.assertIn('ExitOnForwardFailure=yes', args)
+        self.assertIn('BatchMode=yes', args)
+        self.assertEqual(run.call_args.kwargs['stdout'], lc.subprocess.DEVNULL)
+        self.assertTrue(run.call_args.kwargs['close_fds'])
+        desired = lc.read_json(lc.STATE / 'ssh-tunnel.json')
+        with patch.object(lc, 'tunnel_status', return_value=desired | {'running': True}), \
+             patch.object(lc, 'run') as run, patch.object(lc, 'stop_tunnel') as stop:
+            lc.start_tunnel(self.record)
+            run.assert_not_called()
+            stop.assert_not_called()
+
+    def test_failed_ssh_is_reported_without_model_operations(self):
+        with patch.object(lc, 'tunnel_status', return_value={'running': False}), \
+             patch.object(lc.subprocess, 'run', side_effect=RuntimeError('remote port already in use')), \
+             patch.object(lc, 'compose') as compose, patch.object(lc, 'launch') as launch:
+            lc.start_tunnel(self.record)
+            compose.assert_not_called()
+            launch.assert_not_called()
+        self.assertIn('remote port already in use', lc.read_json(lc.STATE / 'ssh-tunnel.json')['error'])
+
+    def test_stop_closes_only_owned_master_even_if_config_removed(self):
+        (self.root / 'tunnel.env').unlink()
+        with patch.object(lc, 'tunnel_status', return_value={'running': True, 'ssh_host': 'vultr-01'}), \
+             patch.object(lc, 'run') as run:
+            lc.stop_tunnel()
+        self.assertEqual(run.call_args.args[0],
+                         ['ssh', '-S', lc.STATE / 'ssh-tunnel' / 'control', '-O', 'exit', 'vultr-01'])
+
+    def test_existing_release_start_repairs_tunnel_without_restart(self):
+        old = {'active': 'same', 'running': True}
+        with patch.object(lc, 'state', return_value=old), \
+             patch.object(lc, 'containers', return_value=[]), \
+             patch.object(lc, 'wait_ready'), patch.object(lc, 'test_release'), \
+             patch.object(lc, 'release', return_value=(None, self.record)), \
+             patch.object(lc, 'start_tunnel') as tunnel, \
+             patch.object(lc, 'stop') as stop, patch.object(lc, 'launch') as launch:
+            lc.replace('same', {})
+            tunnel.assert_called_once_with(self.record)
+            stop.assert_not_called()
+            launch.assert_not_called()
 
 
 if __name__ == '__main__':

@@ -618,6 +618,7 @@ def wait_for_swap_quiet(rec, quiet_seconds=10, timeout_seconds=600):
 
 
 def stop(release_id, secrets):
+    stop_tunnel()
     if release_id:
         compose(release_id, secrets, 'stop', capture=False)
     else:
@@ -663,6 +664,80 @@ def launch(release_id, secrets):
     atomic(ROOT / 'reports' / release_id / 'runtime.json', {
         'release': release_id, 'runtime': rec['runtime'], 'engine_configuration_lines': backend_lines,
         'nvfp4_generation_smoke': 'passed', 'capacity_qualification': 'separate'})
+    start_tunnel(rec)
+
+
+def tunnel_status():
+    record = read_json(STATE / 'ssh-tunnel.json', {})
+    running = False
+    if record.get('ssh_host') and (STATE / 'ssh-tunnel' / 'control').exists():
+        try:
+            result = subprocess.run(
+                ['ssh', '-S', str(STATE / 'ssh-tunnel' / 'control'), '-O', 'check',
+                 record['ssh_host']], capture_output=True, text=True, timeout=5)
+            running = result.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return record | {'running': running}
+
+
+def stop_tunnel():
+    record = tunnel_status()
+    if record['running']:
+        run(['ssh', '-S', STATE / 'ssh-tunnel' / 'control', '-O', 'exit',
+             record['ssh_host']], timeout=5)
+    (STATE / 'ssh-tunnel' / 'control').unlink(missing_ok=True)
+    (STATE / 'ssh-tunnel.json').unlink(missing_ok=True)
+
+
+def start_tunnel(rec):
+    # Connectivity failures must not roll back or stop a healthy model.
+    try:
+        settings = env_file(ROOT / 'tunnel.env', {'SSH_HOST', 'REMOTE_PORT'}, False)
+        destination = settings.get('SSH_HOST', '')
+        if not destination:
+            stop_tunnel()
+            return
+        if not re.fullmatch(r'(?:[a-zA-Z0-9_][a-zA-Z0-9_.-]*@)?[a-zA-Z0-9_][a-zA-Z0-9_.-]*', destination):
+            fail('SSH_HOST must be an SSH host alias, hostname or user@hostname')
+        host = rec['identity']['host']
+        remote_port = int(settings.get('REMOTE_PORT', host['PORT']))
+        if not 1 <= remote_port <= 65535:
+            fail('REMOTE_PORT must be between 1 and 65535')
+        target = host['BIND_HOST']
+        target = f'[{target}]' if ':' in target else target
+        forward = f'127.0.0.1:{remote_port}:{target}:{host["PORT"]}'
+        desired = {'ssh_host': destination, 'forward': forward,
+                   'remote_url': f'http://127.0.0.1:{remote_port}/v1'}
+        previous = tunnel_status()
+        if previous['running'] and all(previous.get(k) == v for k, v in desired.items()):
+            return
+        stop_tunnel()
+        socket_dir = STATE / 'ssh-tunnel'
+        socket_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        socket_dir.chmod(0o700)
+        atomic(STATE / 'ssh-tunnel.json', desired)
+        # A forked SSH master must not inherit captured pipes or the lifecycle lock.
+        with tempfile.TemporaryFile(mode='w+') as errors:
+            result = subprocess.run(
+                ['ssh', '-fNT', '-M', '-S', str(socket_dir / 'control'),
+                 '-o', 'ControlPersist=no', '-o', 'BatchMode=yes',
+                 '-o', 'StrictHostKeyChecking=accept-new',
+                 '-o', 'ConnectTimeout=10', '-o', 'ConnectionAttempts=1',
+                 '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=30',
+                 '-o', 'ServerAliveCountMax=3', '-R', forward, destination],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors,
+                close_fds=True, timeout=20)
+            if result.returncode:
+                errors.seek(0)
+                fail(f'SSH exited with {result.returncode}: {errors.read()[-2000:].strip()}')
+        if not tunnel_status()['running']:
+            fail('SSH tunnel exited before its control socket became ready')
+        print(f'SSH reverse tunnel ready on {destination}: {desired["remote_url"]}')
+    except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+        record = read_json(STATE / 'ssh-tunnel.json', {})
+        atomic(STATE / 'ssh-tunnel.json', record | {'error': str(error)})
+        print(f'Warning: SSH tunnel failed; local inference remains running. {error}', file=sys.stderr)
 
 
 def reset_derived_cache(rec):
@@ -695,6 +770,7 @@ def replace(release_id, secrets):
     if old['active'] == release_id and old['running']:
         wait_ready(release_id, secrets)
         test_release(release_id, secrets, 'smoke')
+        start_tunnel(release(release_id)[1])
         print('Requested release is already running.')
         return
     # Validate candidate fully before stopping the active service.
@@ -750,6 +826,7 @@ def replace(release_id, secrets):
 def status():
     current = state()
     result = dict(current)
+    result['ssh_tunnel'] = tunnel_status()
     if current['active']:
         _, rec = release(current['active'])
         identity = rec['identity']
